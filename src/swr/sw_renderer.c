@@ -289,7 +289,11 @@ static void swrDrawSprite(
 				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
 			
 			for (int x = 0; x < dw; x++)
-				dstline[x] = srcline[x];
+			{
+				uint32_t pixel = srcline[x];
+				if (pixel & 0xFF000000) // alpha not equal to 0
+					dstline[x] = pixel;
+			}
 		}
 	}
 	else
@@ -305,7 +309,11 @@ static void swrDrawSprite(
 				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
 			
 			for (int x = 0; x < dw; x++)
-				dstline[x] = srcline[(int)((long)x*osw/odw)];
+			{
+				uint32_t pixel = srcline[(int)((long)x*osw/odw)];
+				if (pixel & 0xFF000000) // alpha not equal to 0
+					dstline[x] = pixel;
+			}
 		}
 	}
 }
@@ -582,7 +590,6 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						dh = glyph->sourceHeight;
 						
 						SWTexture* texture = swr->textures[pageId];
-						fprintf(stderr, "sx=%d sy=%d sw=%d sh=%d\n", sx,sy,sw,sh);
 						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, alpha);
 						
                         drewSuccessfully = true;
