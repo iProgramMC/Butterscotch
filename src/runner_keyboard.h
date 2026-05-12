@@ -7,9 +7,12 @@
 // GML uses key codes 0-255 (vk_nokey=0, vk_anykey=1, ASCII codes, etc.)
 #define GML_KEY_COUNT 256
 
-// GML Virtual Key Constants (match Windows VK codes)
 #define VK_NOKEY     0
 #define VK_ANYKEY    1
+
+#ifndef PLATFORM_SWR_WIN32
+
+// GML Virtual Key Constants (match Windows VK codes)
 #define VK_BACKSPACE 8
 #define VK_TAB       9
 #define VK_ENTER    13
@@ -41,6 +44,13 @@
 #define VK_F10     121
 #define VK_F11     122
 #define VK_F12     123
+
+#else
+
+#define VK_PAGEUP VK_PRIOR
+#define VK_PAGEDOWN VK_NEXT
+
+#endif
 
 typedef struct RunnerKeyboardState {
     bool keyDown[GML_KEY_COUNT];     // Currently held

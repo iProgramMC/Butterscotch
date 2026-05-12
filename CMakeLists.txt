@@ -63,6 +63,8 @@ target_include_directories(butterscotch PUBLIC vendor/md5)
 if(PLATFORM STREQUAL "swr")
 	# Software Rendering
 	
+	target_compile_options(butterscotch PRIVATE -Wno-unused-function)
+	
     # stb_image
     target_include_directories(butterscotch PUBLIC vendor/stb/image)
 
@@ -97,6 +99,11 @@ if(PLATFORM STREQUAL "swr")
     if(ENABLE_VM_STUB_LOGS)
         add_compile_definitions(ENABLE_VM_STUB_LOGS)
     endif()
+	
+	add_compile_definitions(PLATFORM_SWR)
+	if(MINGW)
+		add_compile_definitions(PLATFORM_SWR_WIN32)
+	endif()
 elseif(PLATFORM STREQUAL "glfw")
     if(ENABLE_GLES)
         file(GLOB GL_SOURCES src/gl/*.c src/image/*.c)
