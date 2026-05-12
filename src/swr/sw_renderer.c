@@ -124,7 +124,18 @@ FORCE_INLINE bool swrMustRotate(float angleDeg)
 	if (angleDegInt > 180*4)
 		angleDegInt -= 360*4;
 	
-	return swrAbs(angleDegInt) < 1; // 0.25 degrees
+	return swrAbs(angleDegInt) >= 1; // 0.25 degrees
+}
+
+FORCE_INLINE bool swrMustRotateTolerant(float angleDeg)
+{
+	int angleDegInt = (int)(angleDeg * 16);
+	angleDegInt %= 360*16;
+	
+	if (angleDegInt > 180*16)
+		angleDegInt -= 360*16;
+	
+	return swrAbs(angleDegInt) >= 1; // 1/16 of a degree
 }
 
 FORCE_INLINE int swrFloor(float x)
@@ -741,7 +752,7 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 
 	SWTexture* texture = swr->textures[pageId];
 	
-	if (UNLIKELY(!swrMustRotate(angleDeg)))
+	if (UNLIKELY(swrMustRotate(angleDeg)))
 	{
 		float pivotX = x - dx;
 		float pivotY = y - dy;
@@ -786,7 +797,7 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	if (UNLIKELY(!swrMustRotate(angleDeg)))
+	if (UNLIKELY(swrMustRotate(angleDeg)))
 	{
 		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, angleDeg, pivotX * dw, pivotY * dh);
 	}
@@ -968,6 +979,14 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
 	
 	// TODO: do we need to mirror the way the text scrolls too?!
+	float cosA = 1.0f, sinA = 0.0f, angleRad = 0.0f;
+	bool mustRotate = swrMustRotateTolerant(angleDeg);
+	if (UNLIKELY(mustRotate))
+	{
+		angleRad = -angleDeg * M_PI / 180.0f;
+		cosA = cosf(angleRad);
+		sinA = sinf(angleRad);
+	}
 	
 	int textLen = (int) strlen(text);
 	int lineCount = TextUtils_countLines(text, textLen);
@@ -1039,7 +1058,17 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						dy = round(dy * 2) / 2;
 						
 						SWTexture* texture = swr->textures[pageId];
-						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
+						
+						if (UNLIKELY(mustRotate))
+						{
+							float ndx = cosA * dx - sinA * dy;
+							float ndy = sinA * dx + cosA * dy;
+							swrDrawSpriteRotated(renderer, ndx, ndy, dw, dh, texture, sx, sy, sw, sh, color, alpha, angleDeg, 0.0f, 0.0f);
+						}
+						else
+						{
+							swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
+						}
 						
 						drewSuccessfully = true;
 					}
