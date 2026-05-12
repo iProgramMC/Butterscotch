@@ -14,6 +14,8 @@ typedef struct
 }
 SWRenderer;
 
+void Runner_setNextFrame(uint32_t* framebuffer, int width, int height);
+
 static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
@@ -45,6 +47,24 @@ static void SWRenderer_endFrame(Renderer* renderer)
 {
     (void)renderer;
 	fprintf(stderr, "%s\n", __func__);
+
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	size_t fbsize = swr->width * swr->height;
+	int a = rand() % fbsize;
+	int b = rand() % fbsize;
+	if (a > b) {
+		int tmp = a;
+		a = b;
+		b = tmp;
+	}
+	
+	uint32_t clr = rand() + (rand() << 16);
+	for (int i = a; i < b; i++) {
+		swr->fb[i] = clr;
+	}
+	
+	Runner_setNextFrame(swr->fb, swr->width, swr->height);
 }
  
 static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH,

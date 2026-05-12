@@ -86,18 +86,44 @@ static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
+static uint32_t* nextFrameBuffer = NULL;
+static int nextFrameBufferWidth = 0;
+static int nextFrameBufferHeight = 0;
+
+void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
+{
+	nextFrameBuffer = framebuffer;
+	nextFrameBufferWidth = width;
+	nextFrameBufferHeight = height;
+}
+
 static void swrSwapBuffers()
 {
-	static int swapCount = 0;
+	int width = nextFrameBufferWidth;
+	int height = nextFrameBufferHeight;
+	uint32_t* pixels = nextFrameBuffer;
 	
 	HDC hdc = GetDC(hWnd);
 	
-	char buffer[256];
-	snprintf(buffer, sizeof buffer, "Swap Count: %d", swapCount);
-	swapCount++;
-	
-	TextOutA(hdc, 0, 0, buffer, (int) strlen(buffer));
-	
+	BITMAPINFO bmi = {0};
+	bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
+	bmi.bmiHeader.biWidth       = width;
+	bmi.bmiHeader.biHeight      = -height;
+	bmi.bmiHeader.biPlanes      = 1;
+	bmi.bmiHeader.biBitCount    = 32;
+	bmi.bmiHeader.biCompression = BI_RGB;
+
+	SetDIBitsToDevice(
+		hdc,
+		0, 0, // dest X/Y
+		width, height,
+		0, 0,
+		0, height,
+		nextFrameBuffer,
+		&bmi,
+		DIB_RGB_COLORS
+	);
+
 	ReleaseDC(hWnd, hdc);
 }
 
@@ -112,8 +138,8 @@ static bool swrIsKeyPressed(int keyCode)
 void RunnerSWR_setWindowTitle(void* pWindowHandle, const char *pTitle)
 {
 	HWND hWnd = (HWND) pWindowHandle;
-    char windowTitle[256];
-    snprintf(windowTitle, sizeof(windowTitle), "Butterscotch[SW] - %s", pTitle);
+	char windowTitle[256];
+	snprintf(windowTitle, sizeof(windowTitle), "Butterscotch[SW] - %s", pTitle);
 	SetWindowTextA(hWnd, windowTitle);
 }
 
@@ -128,37 +154,37 @@ void initializeGame()
 	pDataWin = DataWin_parse(
 		pDataWinPath,
 		(DataWinParserOptions) {
-            .parseGen8 = true,
-            .parseOptn = true,
-            .parseLang = true,
-            .parseExtn = false,
-            .parseSond = true,
-            .parseAgrp = true,
-            .parseSprt = true,
-            .parseBgnd = true,
-            .parsePath = true,
-            .parseScpt = true,
-            .parseGlob = true,
-            .parseShdr = true,
-            .parseFont = true,
-            .parseTmln = true,
-            .parseObjt = true,
-            .parseRoom = true,
-            .parseTpag = true,
-            .parseCode = true,
-            .parseVari = true,
-            .parseFunc = true,
-            .parseStrg = true,
-            .parseTxtr = true,
-            .parseAudo = true,
-            .skipLoadingPreciseMasksForNonPreciseSprites = true,
-            .lazyLoadRooms = bLazilyLoadRooms,
-            .eagerlyLoadedRooms = NULL
-        }
-    );
+			.parseGen8 = true,
+			.parseOptn = true,
+			.parseLang = true,
+			.parseExtn = false,
+			.parseSond = true,
+			.parseAgrp = true,
+			.parseSprt = true,
+			.parseBgnd = true,
+			.parsePath = true,
+			.parseScpt = true,
+			.parseGlob = true,
+			.parseShdr = true,
+			.parseFont = true,
+			.parseTmln = true,
+			.parseObjt = true,
+			.parseRoom = true,
+			.parseTpag = true,
+			.parseCode = true,
+			.parseVari = true,
+			.parseFunc = true,
+			.parseStrg = true,
+			.parseTxtr = true,
+			.parseAudo = true,
+			.skipLoadingPreciseMasksForNonPreciseSprites = true,
+			.lazyLoadRooms = bLazilyLoadRooms,
+			.eagerlyLoadedRooms = NULL
+		}
+	);
 
-    pGen8 = &pDataWin->gen8;
-    fprintf(stderr, "Loaded \"%s\" (%d) successfully! [Bytecode Version %u / GameMaker version %u.%u.%u.%u]\n", pGen8->name, pGen8->gameID, pGen8->bytecodeVersion, pDataWin->detectedFormat.major, pDataWin->detectedFormat.minor, pDataWin->detectedFormat.release, pDataWin->detectedFormat.build);
+	pGen8 = &pDataWin->gen8;
+	fprintf(stderr, "Loaded \"%s\" (%d) successfully! [Bytecode Version %u / GameMaker version %u.%u.%u.%u]\n", pGen8->name, pGen8->gameID, pGen8->bytecodeVersion, pDataWin->detectedFormat.major, pDataWin->detectedFormat.minor, pDataWin->detectedFormat.release, pDataWin->detectedFormat.build);
 
 	RunnerSWR_setWindowTitle(hWnd, pGen8->displayName);
 	
@@ -167,18 +193,18 @@ void initializeGame()
 	
 	Profiler_setEnabled(&pVMContext->profiler, nProfilerFramesBetween > 0);
 #ifdef ENABLE_VM_OPCODE_PROFILER
-    vm->opcodeProfilerEnabled = bOpcodeProfilerEnabled;
-    if (vm->opcodeProfilerEnabled) {
-        vm->opcodeVariantCounts = safeCalloc(256 * 256, sizeof(uint64_t));
-        vm->opcodeRValueTypeCounts = safeCalloc(256 * 256, sizeof(uint64_t));
-    }
+	vm->opcodeProfilerEnabled = bOpcodeProfilerEnabled;
+	if (vm->opcodeProfilerEnabled) {
+		vm->opcodeVariantCounts = safeCalloc(256 * 256, sizeof(uint64_t));
+		vm->opcodeRValueTypeCounts = safeCalloc(256 * 256, sizeof(uint64_t));
+	}
 #endif
 
-    if (nSetSeed) {
-        srand((unsigned int) nSetSeed);
-        vm->hasFixedSeed = true;
-        fprintf(stderr, "Using fixed RNG seed: %d\n", nSetSeed);
-    }
+	if (nSetSeed) {
+		srand((unsigned int) nSetSeed);
+		vm->hasFixedSeed = true;
+		fprintf(stderr, "Using fixed RNG seed: %d\n", nSetSeed);
+	}
 	
 	pOverlayFS = (FileSystem*) OverlayFileSystem_create(pDataWinDir, pSaveDataDir);
 	
