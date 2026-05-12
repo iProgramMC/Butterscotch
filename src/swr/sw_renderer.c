@@ -6,6 +6,9 @@
 
 #define FLT_MAX 99999999999.0f
 
+#define LIKELY(cond)   __builtin_expect(!!(cond), 1)
+#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
+
 #define UNUSED __attribute__ ((unused))
 #define FORCE_INLINE static inline __attribute__((always_inline))
 
@@ -54,6 +57,7 @@ typedef union
 Color;
 
 FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
+FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
 FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
 
 FORCE_INLINE uint32_t convertColor(uint32_t p)
@@ -105,6 +109,29 @@ FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
 	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) / 256;
 	
 	*dcolor = dc.l;
+}
+
+FORCE_INLINE bool swrMustRotate(float angleDeg)
+{
+	int angleDegInt = (int)(angleDeg * 4);
+	angleDegInt %= 360*4;
+	
+	if (angleDegInt > 180*4)
+		angleDegInt -= 360*4;
+	
+	return swrAbs(angleDegInt) < 1; // 0.25 degrees
+}
+
+FORCE_INLINE int swrFloor(float x)
+{
+	int i = (int) x;
+	return i - (x < (float) i);
+}
+
+FORCE_INLINE int swrCeiling(float x)
+{
+	int i = (int) x;
+	return i + (x > (float) i);
 }
 
 static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
@@ -298,6 +325,14 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	}
 }
 
+static void swrDrawRectangle(Renderer* renderer, int x1, int y1, int x2, int y2, uint32_t color, float alpha)
+{
+	swrDrawHLine(renderer, x1, y1, (x2 - x1) + 1, color, alpha, true);
+	swrDrawHLine(renderer, x1, y2, (x2 - x1) + 1, color, alpha, true);
+	swrDrawVLine(renderer, x1, y1, (y2 - y1) + 1, color, alpha, true);
+	swrDrawVLine(renderer, x2, y1, (y2 - y1) + 1, color, alpha, true);
+}
+
 static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, float alpha, bool xform)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
@@ -484,21 +519,114 @@ static void swrDrawSprite(
 		}
 	}
 }
+
 static void swrDrawSpriteRotated(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
 	uint32_t tintColor, float alpha,
 	bool flipX, bool flipY,
-	float angle,
+	float angleDeg,
 	float pivotX,
 	float pivotY
 )
 {
-	// TODO: Implement
-	(void) angle;
-	(void) pivotX;
-	(void) pivotY;
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, tintColor, alpha, flipX, flipY);
+	SWRenderer* swr = (SWRenderer*) renderer;
+	float angleRad = -angleDeg * M_PI / 180.0f;
+	
+	tintColor = convertColor(tintColor);
+	
+	float cosA = cosf(angleRad);
+	float sinA = sinf(angleRad);
+	
+	float cnrx[4], cnry[4];
+	cnrx[0] = cnrx[3] = dx;
+	cnry[0] = cnry[1] = dy;
+	cnrx[1] = cnrx[2] = dx + dw;
+	cnry[2] = cnry[3] = dy + dh;
+	
+	float pxa = pivotX + dx;
+	float pya = pivotY + dy;
+	
+	float minXf = FLT_MAX, minYf = FLT_MAX, maxXf = -FLT_MAX, maxYf = -FLT_MAX;
+	for (int i = 0; i < 4; i++)
+	{
+		float cxi = cnrx[i] - pxa;
+		float cyi = cnry[i] - pya;
+		float rx = cosA * cxi - sinA * cyi + pxa;
+		float ry = sinA * cxi + cosA * cyi + pya;
+		if (minXf > rx) minXf = rx;
+		if (maxXf < rx) maxXf = rx;
+		if (minYf > ry) minYf = ry;
+		if (maxYf < ry) maxYf = ry;
+	}
+
+	// minX, minY, maxX, maxY now represent an AABB of pixels we should loop over
+	int minX = swrFloor(minXf);
+	int minY = swrFloor(minYf);
+	int maxX = swrCeiling(maxXf);
+	int maxY = swrCeiling(maxYf);
+	
+	// basic out-of-bound checks
+	if (maxX < 0) return;
+	if (maxY < 0) return;
+	if (minX >= swr->width) return;
+	if (minY >= swr->height) return;
+	
+	// however, we'll need to clip it against out of bounds first
+	int minXc = minX, minYc = minY, maxXc = maxX, maxYc = maxY;
+	
+	if (minXc < 0) minXc = 0;
+	if (minYc < 0) minYc = 0;
+	if (maxXc >= swr->width)  maxXc = swr->width;
+	if (maxYc >= swr->height) maxYc = swr->height;
+	
+	// some final clip checks
+	if (minXc >= maxXc || minYc >= maxYc) return;
+	
+	int sox = flipX ? sw - 1 : 0;
+	int soy = flipY ? sh - 1 : 0;
+	int six = flipX ? -1 : 1;
+	int siy = flipY ? -1 : 1;
+	
+	for (int cy = minYc; cy < maxYc; cy++)
+	{
+		uint32_t *dstline = &swr->fb[cy * swr->fbPitch];
+		for (int cx = minXc; cx < maxXc; cx++)
+		{
+			// we need to determine the texture-space coordinate of cx/cy
+			float ox = (float) cx + 0.5f - pxa;
+			float oy = (float) cy + 0.5f - pya;
+			
+			// "undo" the rotation
+			float lx =  cosA * ox + sinA * oy;
+			float ly = -sinA * ox + cosA * oy;
+			
+			// turn it into a texture-local coordinate
+			lx += pxa - dx;
+			ly += pya - dy;
+			
+			if (lx < 0 || ly < 0 || lx >= (float) dw || ly >= (float) dh) continue;
+			
+			lx = lx * sw / dw;
+			ly = ly * sh / dh;
+			
+			int tx = (int)(sox + lx * six);
+			int ty = (int)(soy + ly * siy);
+			
+			if (tx < 0) tx = 0;
+			if (ty < 0) ty = 0;
+			if (tx >= sw) tx = sw - 1;
+			if (ty >= sh) ty = sh - 1;
+			
+			tx += sx;
+			ty += sy;
+			
+			uint32_t src = texture->buffer[ty * texture->width + tx];
+			
+			if (opaque(src))
+				alphaBlend(&dstline[cx], tint(tintColor, src), alpha);
+		}
+	}
 }
 
 static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y,
@@ -537,15 +665,15 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	if (swrAbs((int)angleDeg) % 360 < 1)
+	if (UNLIKELY(!swrMustRotate(angleDeg)))
 	{
-		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+		float pivotX = x - dx;
+		float pivotY = y - dy;
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, angleDeg, pivotX, pivotY);
 	}
 	else
 	{
-		float pivotX = (x - dx) / dw;
-		float pivotY = (y - dy) / dh;
-		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, -angleDeg * M_PI / 180.0f, pivotX, pivotY);
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 	}
 }
 
@@ -554,9 +682,6 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 									  float x, float y, float xscale, float yscale, float angleDeg,
 									  float pivotX, float pivotY, uint32_t color, float alpha)
 {
-	(void)angleDeg;
-	(void)pivotX; (void)pivotY;
-	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	DataWin* dwin = renderer->dataWin;
 
@@ -585,15 +710,10 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	
-	if (swrAbs((int)angleDeg) % 360 < 1)
-	{
-		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
-	}
+	if (UNLIKELY(!swrMustRotate(angleDeg)))
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, angleDeg, pivotX * dw, pivotY * dh);
 	else
-	{
-		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, -angleDeg * M_PI / 180.0f, pivotX, pivotY);
-	}
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -616,10 +736,7 @@ static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, flo
 	
 	if (outline)
 	{
-		swrDrawHLine(renderer, (int)x1, (int)y1, (int)(x2 - x1) + 1, color, alpha, true);
-		swrDrawHLine(renderer, (int)x1, (int)y2, (int)(x2 - x1) + 1, color, alpha, true);
-		swrDrawVLine(renderer, (int)x1, (int)y1, (int)(y2 - y1) + 1, color, alpha, true);
-		swrDrawVLine(renderer, (int)x2, (int)y1, (int)(y2 - y1) + 1, color, alpha, true);
+		swrDrawRectangle(renderer, (int) x1, (int) y1, (int) x2, (int) y2, color, alpha);
 	}
 	else
 	{
