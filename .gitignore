@@ -7,4 +7,6 @@ CMakeUserPresets.json
 .devcontainer/
 
 build-win/
+build-win-old/
 build-win-swr/
+build-win-swr-release/
