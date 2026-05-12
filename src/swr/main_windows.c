@@ -518,10 +518,8 @@ void updateGame()
 	}
 }
 
-int main(int argc, char* argv[])
+int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
-	HINSTANCE hInstance = GetModuleHandle(NULL);
-	
 	static WNDCLASS windowClass;
 	windowClass.lpfnWndProc = WindowProc;
 	windowClass.hInstance = hInstance;
@@ -563,7 +561,7 @@ int main(int argc, char* argv[])
 		return 1;
 	}
 	
-	ShowWindow(hWnd, SW_SHOWNORMAL);
+	ShowWindow(hWnd, nCmdShow);
 	UpdateWindow(hWnd);
 	
 	initializeGame();

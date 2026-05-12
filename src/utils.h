@@ -140,3 +140,9 @@ typedef struct {
     char* key;
     bool value;
 } StringBooleanEntry;
+
+int debug_fprintf(FILE* stream, const char* fmt, ...);
+int debug_printf(const char* fmt, ...);
+
+#define fprintf debug_fprintf
+#define printf debug_printf

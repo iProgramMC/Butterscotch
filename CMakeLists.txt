@@ -134,6 +134,8 @@ if(PLATFORM STREQUAL "swr")
 	file(GLOB IMAGE_SOURCES src/image/*.c)
 	target_sources(butterscotch PRIVATE ${IMAGE_SOURCES})
 	target_link_libraries(butterscotch bz2)
+	
+	add_link_options(butterscotch PRIVATE -mwindows)
 
 	# add audio for fun
 	if(NOT AUDIO_BACKEND STREQUAL "none")
