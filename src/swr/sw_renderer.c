@@ -225,8 +225,8 @@ static void swrTransformPosIfNeeded(SWRenderer* swr, int* dx, int* dy)
 {
 	if (!swr->viewActive) return;
 	
-	if (dx) { *dx += swr->viewX; *dx = (int)((long) *dx * swr->width  / swr->viewW); }
-	if (dy) { *dy += swr->viewY; *dy = (int)((long) *dy * swr->height / swr->viewH); }
+	if (dx) { *dx -= swr->viewX; *dx = (int)((long) *dx * swr->width  / swr->viewW); }
+	if (dy) { *dy -= swr->viewY; *dy = (int)((long) *dy * swr->height / swr->viewH); }
 }
 
 static void swrTransformSizeIfNeeded(SWRenderer* swr, int* dx, int* dy)
