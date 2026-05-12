@@ -374,8 +374,8 @@ void updateGame()
 	double frameStartTime = 0;
 
 	if (shouldStep) {
+		frameStartTime = swrGetTime();
 		if (bTraceFrames) {
-			frameStartTime = swrGetTime();
 			fprintf(stderr, "Frame %d (Start)\n", runner->frameCount);
 		}
 
@@ -457,9 +457,16 @@ void updateGame()
 		DestroyWindow(hWnd);
 	}
 
-	if (shouldStep && bTraceFrames) {
+	if (shouldStep)
+	{
 		double frameElapsedMs = (swrGetTime() - frameStartTime) * 1000.0;
-		fprintf(stderr, "Frame %d (End, %.2f ms)\n", runner->frameCount, frameElapsedMs);
+		if (bTraceFrames) {
+			fprintf(stderr, "Frame %d (End, %.2f ms)\n", runner->frameCount, frameElapsedMs);
+		}
+		
+		if (frameElapsedMs > 33) {
+			fprintf(stderr, "Frame %d (overtime, %.2f ms)\n", runner->frameCount, frameElapsedMs);
+		}
 	}
 
 	// Only swap when there isn't a room change to match the original runner.

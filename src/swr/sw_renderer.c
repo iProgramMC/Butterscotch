@@ -6,8 +6,9 @@
 #define UNUSED __attribute__ ((unused))
 #define FORCE_INLINE static inline __attribute__((always_inline))
 
-//#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
-#define UNIMP() do { } while (0)
+#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
+//#define UNIMP() do { } while (0)
+#define UNIMP2() do { } while (0)
 
 typedef struct
 {
@@ -44,6 +45,9 @@ typedef union
 	uint32_t l;
 }
 Color;
+
+FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
+FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
 
 FORCE_INLINE uint32_t convertColor(uint32_t p)
 {
@@ -167,13 +171,13 @@ static void SWRenderer_destroy(Renderer* renderer)
 static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
 	(void)renderer; (void)gameW; (void)gameH; (void)windowW; (void)windowH;
-	UNIMP();
+	UNIMP2();
 }
 
 static void SWRenderer_endFrame(Renderer* renderer)
 {
 	(void)renderer;
-	UNIMP();
+	UNIMP2();
 
 	SWRenderer* swr = (SWRenderer*) renderer;
 	Runner_setNextFrame(swr->fb, swr->width, swr->height);
@@ -184,7 +188,7 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 {
 	(void)renderer; (void)viewX; (void)viewY; (void)viewW; (void)viewH;
 	(void)portX; (void)portY; (void)portW; (void)portH; (void)viewAngle;
-	UNIMP();
+	UNIMP2();
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = true;
@@ -201,7 +205,7 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 static void SWRenderer_endView(Renderer* renderer)
 {
 	(void)renderer;
-	UNIMP();
+	UNIMP2();
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = false;
@@ -212,13 +216,13 @@ static void SWRenderer_beginGUI(Renderer* renderer, int32_t guiW, int32_t guiH,
 {
 	(void)renderer; (void)guiW; (void)guiH;
 	(void)portX; (void)portY; (void)portW; (void)portH;
-	UNIMP();
+	UNIMP2();
 }
 
 static void SWRenderer_endGUI(Renderer* renderer)
 {
 	(void)renderer;
-	UNIMP();
+	UNIMP2();
 }
 
 static void swrTransformPosIfNeeded(SWRenderer* swr, int* dx, int* dy)
@@ -235,6 +239,16 @@ static void swrTransformSizeIfNeeded(SWRenderer* swr, int* dx, int* dy)
 	
 	if (dx) *dx = (int)((long) *dx * swr->width  / swr->viewW);
 	if (dy) *dy = (int)((long) *dy * swr->height / swr->viewH);
+}
+
+FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, float alpha)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	if (x < 0 || y < 0) return;
+	if (x >= swr->width || y >= swr->height) return;
+	
+	alphaBlend(&swr->fb[y * swr->fbPitch + x], color, alpha);
 }
 
 static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t color, float alpha, bool xform)
@@ -274,6 +288,90 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	{
 		uint32_t *line = &swr->fb[(dy + i) * swr->fbPitch + dx];
 		alphaBlend(&line[i], color, alpha);
+	}
+}
+
+static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, float alpha, bool xform)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	if (xform) {
+		swrTransformPosIfNeeded(swr, &x1, &y1);
+		swrTransformPosIfNeeded(swr, &x2, &y2);
+		swrTransformSizeIfNeeded(swr, &width, NULL);
+	}
+	
+	if (x1 == x2)
+	{
+		swrDrawVLine(renderer, x1, swrMin(y1, y2), swrAbs(y1 - y2), color, alpha, false);
+		return;
+	}
+	if (y1 == y2)
+	{
+		swrDrawHLine(renderer, swrMin(x1, x2), y1, swrAbs(x1 - x2), color, alpha, false);
+		return;
+	}
+	
+	int dx = x2 - x1, dy = y2 - y1;
+	int dx1 = swrAbs(dx), dy1 = swrAbs(dy), xe, ye, x, y;
+	int px = 2 * dy1 - dx1, py = 2 * dx1 - dy1;
+	
+	if (dy1 <= dx1)
+	{
+		if (dx >= 0)
+		{
+			x = x1, y = y1, xe = x2;
+		}
+		else
+		{
+			x = x2, y = y2, xe = x1;
+		}
+		
+		swrPlotPixel(renderer, x, y, color, alpha);
+		
+		for (int i = 0; x < xe; i++)
+		{
+			x++;
+			if (px < 0)
+			{
+				px += 2 * dy1;
+			}
+			else
+			{
+				if ((dx < 0 && dy < 0) || (dx > 0 && dy > 0)) y++; else y--;
+				px += 2 * (dy1 - dx1);
+			}
+			
+			swrPlotPixel(renderer, x, y, color, alpha);
+		}
+	}
+	else
+	{
+		if (dy >= 0)
+		{
+			x = x1, y = y1, ye = y2;
+		}
+		else
+		{
+			x = x2, y = y2, ye = y1;
+		}
+		
+		swrPlotPixel(renderer, x, y, color, alpha);
+		
+		for (int i = 0; y < ye; i++)
+		{
+			y++;
+			if (py <= 0)
+			{
+				py += 2 * dx1;
+			}
+			else
+			{
+				if ((dx < 0 && dy < 0) || (dx > 0 && dy > 0)) x++; else x--;
+				py += 2 * (dx1 - dy1);
+			}
+			
+			swrPlotPixel(renderer, x, y, color, alpha);
+		}
 	}
 }
 
@@ -491,14 +589,19 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
-	UNIMP();
+	
+	swrDrawLine(renderer, (int)x1, (int)y1, (int)x2, (int)y2, (int)width, color, alpha, true);
 }
 
 static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									float x3, float y3, bool outline)
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
-	UNIMP();
+	UNIMP2();
+	
+	swrDrawLine(renderer, (int) x1, (int) y1, (int) x2, (int) y2, 1, renderer->drawColor, renderer->drawAlpha, true);
+	swrDrawLine(renderer, (int) x1, (int) y1, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
+	swrDrawLine(renderer, (int) x2, (int) y2, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
 }
 
 static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -799,10 +902,69 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 								 float xscale, float yscale, bool tileX, bool tileY,
 								 float roomW, float roomH, uint32_t color, float alpha)
 {
-	UNIMP();
-	(void)renderer; (void)tpagIndex; (void)originX; (void)originY; (void)x; (void)y;
-	(void)xscale; (void)yscale; (void)tileX; (void)tileY;
-	(void)roomW; (void)roomH; (void)color; (void)alpha;
+	SWRenderer* swr = (SWRenderer*) renderer;
+    DataWin* dwin = renderer->dataWin;
+
+    if (0 > tpagIndex || dwin->tpag.count <= (uint32_t) tpagIndex) return;
+
+    TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
+    int16_t pageId = tpag->texturePageId;
+    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+
+    float axScale = fabsf(xscale);
+    float ayScale = fabsf(yscale);
+    float tileW = (float) tpag->boundingWidth * axScale;
+    float tileH = (float) tpag->boundingHeight * ayScale;
+    if (0 >= tileW || 0 >= tileH) return;
+
+    float startX, endX, startY, endY;
+    if (tileX) {
+        startX = fmodf(x - originX * axScale, tileW);
+        if (startX > 0) startX -= tileW;
+        endX = roomW;
+    } else {
+        startX = x - originX * axScale;
+        endX = startX + tileW;
+    }
+    if (tileY) {
+        startY = fmodf(y - originY * ayScale, tileH);
+        if (startY > 0) startY -= tileH;
+        endY = roomH;
+    } else {
+        startY = y - originY * ayScale;
+        endY = startY + tileH;
+    }
+	
+	int sx = tpag->sourceX;
+	int sy = tpag->sourceY;
+	int sw = tpag->sourceWidth;
+	int sh = tpag->sourceHeight;
+
+    int localX0 = tpag->targetX - originX;
+    int localY0 = tpag->targetY - originY;
+    int localX1 = localX0 + tpag->sourceWidth;
+    int localY1 = localY0 + tpag->sourceHeight;
+    int sx0 = xscale * localX0;
+    int sy0 = yscale * localY0;
+    int sx1 = xscale * localX1;
+    int sy1 = yscale * localY1;
+
+    for (int dy = startY; endY > dy; dy += tileH) {
+        int cy = dy + (int)(originY * ayScale);
+        int vy0 = cy + sy0;
+        int vy1 = cy + sy1;
+		int dh = vy1 - vy0;
+
+        for (int dx = startX; endX > dx; dx += tileW) {
+            int cx = dx + (int)(originX * axScale);
+            int vx0 = cx + sx0;
+            int vx1 = cx + sx1;
+			int dw = vx1 - vx0;
+
+			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha);
+		}
+	}
 }
 
 static int32_t SWRenderer_createSurface(Renderer* renderer, int32_t width, int32_t height)
