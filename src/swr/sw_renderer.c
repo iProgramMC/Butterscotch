@@ -538,6 +538,9 @@ static void swrDrawSpriteRotated(
 	SWRenderer* swr = (SWRenderer*) renderer;
 	float angleRad = -angleDeg * M_PI / 180.0f;
 	
+	swrTransformPosIfNeeded(swr, &dx, &dy);
+	swrTransformSizeIfNeeded(swr, &dw, &dh);
+	
 	tintColor = convertColor(tintColor);
 	
 	float cosA = cosf(angleRad);
@@ -689,7 +692,7 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	DataWin* dwin = renderer->dataWin;
-
+	
 	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
 	
 	bool flipX = false, flipY = false;
@@ -716,9 +719,13 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	SWTexture* texture = swr->textures[pageId];
 	
 	if (UNLIKELY(!swrMustRotate(angleDeg)))
+	{
 		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, angleDeg, pivotX * dw, pivotY * dh);
+	}
 	else
+	{
 		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+	}
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
