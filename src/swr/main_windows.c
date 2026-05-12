@@ -12,7 +12,7 @@
 #include "overlay_file_system.h"
 #include "audio_system.h"
 #include "sw_renderer.h"
-#ifdef ENABLE_MINIAUDIO
+#ifdef USE_MINIAUDIO
 #include "audio/miniaudio/ma_audio_system.h"
 #else
 #include "noop_audio_system.h"
@@ -264,7 +264,7 @@ void initializeGame()
 	
 	pOverlayFS = (FileSystem*) OverlayFileSystem_create(pDataWinDir, pSaveDataDir);
 	
-#ifdef ENABLE_MINIAUDIO
+#ifdef USE_MINIAUDIO
 	pAudioSystem = (AudioSystem*) MaAudioSystem_create();
 #else
 	pAudioSystem = (AudioSystem*) NoopAudioSystem_create();
