@@ -22,9 +22,9 @@
 #define WINDOW_WIDTH 640
 #define WINDOW_HEIGHT 480
 
-static const char* pDataWinPath = "../build-win/data/data.win";
-static const char* pDataWinDir = "../build-win/data";
-static const char* pSaveDataDir = "../build-win/data";
+static const char* pDataWinPath = "./data/data.win";
+static const char* pDataWinDir = "./data";
+static const char* pSaveDataDir = "./data";
 
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
@@ -84,7 +84,7 @@ static void keyReleased(uint8_t key)
 	keysReleasedNextFrame[key] = true;
 }
 
-static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+static LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
 	{
