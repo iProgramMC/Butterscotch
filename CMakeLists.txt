@@ -138,7 +138,7 @@ if(PLATFORM STREQUAL "swr")
 	# add audio for fun
 	option(ENABLE_MINIAUDIO "Enable miniaudio" ON)
 	if(ENABLE_MINIAUDIO)
-		file(GLOB MA_SOURCES src/glfw/ma_audio_system.c)
+		file(GLOB MA_SOURCES src/audio/miniaudio/ma_audio_system.c)
 		target_sources(butterscotch PRIVATE ${MA_SOURCES})
 		target_include_directories(butterscotch PUBLIC vendor/miniaudio)
 		target_include_directories(butterscotch PUBLIC vendor/stb/vorbis)

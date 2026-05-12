@@ -6,8 +6,8 @@
 #define UNUSED __attribute__ ((unused))
 #define FORCE_INLINE static inline __attribute__((always_inline))
 
-//#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
-#define UNIMP() do { } while (0)
+#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
+//#define UNIMP() do { } while (0)
 
 typedef struct
 {

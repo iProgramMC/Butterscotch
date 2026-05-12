@@ -13,7 +13,7 @@
 #include "audio_system.h"
 #include "sw_renderer.h"
 #ifdef ENABLE_MINIAUDIO
-#include "glfw/ma_audio_system.h"
+#include "audio/miniaudio/ma_audio_system.h"
 #else
 #include "noop_audio_system.h"
 #endif
@@ -28,7 +28,7 @@ static const char* pSaveDataDir = "../build-win/data";
 
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
-static bool bTraceFrames = false;
+static bool bTraceFrames = true;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
 static int nBeginningRoom = -1; // 287
