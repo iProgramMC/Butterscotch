@@ -4,6 +4,10 @@
 #include "image/image_decoder.h"
 
 #define UNUSED __attribute__ ((unused))
+#define FORCE_INLINE static inline __attribute__((always_inline))
+
+//#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
+#define UNIMP() do { } while (0)
 
 typedef struct
 {
@@ -113,13 +117,13 @@ static void SWRenderer_destroy(Renderer* renderer)
 static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
 	(void)renderer; (void)gameW; (void)gameH; (void)windowW; (void)windowH;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_endFrame(Renderer* renderer)
 {
 	(void)renderer;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 
 	SWRenderer* swr = (SWRenderer*) renderer;
 	Runner_setNextFrame(swr->fb, swr->width, swr->height);
@@ -130,7 +134,7 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 {
 	(void)renderer; (void)viewX; (void)viewY; (void)viewW; (void)viewH;
 	(void)portX; (void)portY; (void)portW; (void)portH; (void)viewAngle;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = true;
@@ -147,7 +151,7 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 static void SWRenderer_endView(Renderer* renderer)
 {
 	(void)renderer;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = false;
@@ -158,13 +162,13 @@ static void SWRenderer_beginGUI(Renderer* renderer, int32_t guiW, int32_t guiH,
 {
 	(void)renderer; (void)guiW; (void)guiH;
 	(void)portX; (void)portY; (void)portW; (void)portH;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_endGUI(Renderer* renderer)
 {
 	(void)renderer;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void swrTransformPosIfNeeded(SWRenderer* swr, int* dx, int* dy)
@@ -223,15 +227,44 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	}
 }
 
+FORCE_INLINE bool opaque(uint32_t color)
+{
+	return (color & 0xFF000000) != 0;
+}
+
+FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
+{
+	union {
+		struct {
+			uint8_t b,g,r,a;
+		} p;
+		uint32_t l;
+	} x, y;
+	
+	if ((tintColor & 0xFFFFFF) == 0xFFFFFF)
+		return color;
+	
+	x.l = color;
+	y.l = tintColor;
+	
+	x.p.b = (int)x.p.b * y.p.b / 255;
+	x.p.g = (int)x.p.g * y.p.g / 255;
+	x.p.r = (int)x.p.r * y.p.r / 255;
+	return x.l;
+}
+
 static void swrDrawSprite(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
-	SWTexture* texture, int sx, int sy, int sw, int sh, UNUSED float alpha
+	SWTexture* texture, int sx, int sy, int sw, int sh,
+	uint32_t tintColor, UNUSED float alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	
 	swrTransformPosIfNeeded(swr, &dx, &dy);
 	swrTransformSizeIfNeeded(swr, &dw, &dh);
+	
+	tintColor = convertColor(tintColor);
 	
 	//basic out of bound checks
 	if (dw == 0 || dh == 0) return;
@@ -291,8 +324,8 @@ static void swrDrawSprite(
 			for (int x = 0; x < dw; x++)
 			{
 				uint32_t pixel = srcline[x];
-				if (pixel & 0xFF000000) // alpha not equal to 0
-					dstline[x] = pixel;
+				if (opaque(pixel))
+					dstline[x] = tint(tintColor, pixel);
 			}
 		}
 	}
@@ -311,8 +344,8 @@ static void swrDrawSprite(
 			for (int x = 0; x < dw; x++)
 			{
 				uint32_t pixel = srcline[(int)((long)x*osw/odw)];
-				if (pixel & 0xFF000000) // alpha not equal to 0
-					dstline[x] = pixel;
+				if (opaque(pixel))
+					dstline[x] = tint(tintColor, pixel);
 			}
 		}
 	}
@@ -344,7 +377,7 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, alpha);
+	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 }
 
 static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
@@ -356,7 +389,7 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	(void)x; (void)y; (void)xscale; (void)yscale; (void)angleDeg;
 	(void)pivotX; (void)pivotY; (void)color; (void)alpha;
 	
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -366,14 +399,13 @@ static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
 	(void)renderer; (void)tpagIndex;
 	(void)x1; (void)y1; (void)x2; (void)y2;
 	(void)x3; (void)y3; (void)x4; (void)y4; (void)alpha;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									 uint32_t color, float alpha, bool outline)
 {
 	(void)alpha;
-	fprintf(stderr, "%s\n", __func__);
 	color = convertColor(color);
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
@@ -406,7 +438,7 @@ static void SWRenderer_drawRectangleColor(Renderer* renderer, float x1, float y1
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)color1; (void)color2; (void)color3; (void)color4; (void)alpha; (void)outline;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -414,14 +446,14 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									float x3, float y3, bool outline)
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -429,7 +461,7 @@ static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, flo
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color1; (void)color2; (void)alpha;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 typedef struct
@@ -590,7 +622,7 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						dh = glyph->sourceHeight;
 						
 						SWTexture* texture = swr->textures[pageId];
-						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, alpha);
+						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 						
                         drewSuccessfully = true;
 					}
@@ -630,19 +662,19 @@ static void SWRenderer_drawTextColor(Renderer* renderer, const char* text, float
 	(void)renderer; (void)text; (void)x; (void)y;
 	(void)xscale; (void)yscale; (void)angleDeg;
 	(void)c1; (void)c2; (void)c3; (void)c4; (void)alpha;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_flush(Renderer* renderer)
 {
 	(void)renderer;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static void SWRenderer_clearScreen(Renderer* renderer, uint32_t color, float alpha)
 {
 	(void)renderer; (void)color; (void)alpha;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 }
 
 static int32_t SWRenderer_createSpriteFromSurface(Renderer* renderer, int32_t surfaceID,
@@ -652,61 +684,68 @@ static int32_t SWRenderer_createSpriteFromSurface(Renderer* renderer, int32_t su
 {
 	(void)renderer; (void)surfaceID; (void)x; (void)y; (void)w; (void)h;
 	(void)removeback; (void)smooth; (void)xorig; (void)yorig;
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	return 0;
 }
 
 static void SWRenderer_deleteSprite(Renderer* renderer, int32_t spriteIndex)
 {
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	(void)renderer; (void)spriteIndex;
 }
 
 static void SWRenderer_gpuSetBlendMode(Renderer* renderer, int32_t mode)
 {
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	(void)renderer; (void)mode;
 }
 
 static void SWRenderer_gpuSetBlendModeExt(Renderer* renderer, int32_t sfactor, int32_t dfactor)
 {
-	fprintf(stderr, "%s\n", __func__);
+	UNIMP();
 	(void)renderer; (void)sfactor; (void)dfactor;
 }
 
 static void SWRenderer_gpuSetBlendEnable(Renderer* renderer, bool enable)
 {
+	UNIMP();
 	(void)renderer; (void)enable;
 }
 
 static void SWRenderer_gpuSetAlphaTestEnable(Renderer* renderer, bool enable)
 {
+	UNIMP();
 	(void)renderer; (void)enable;
 }
 
 static void SWRenderer_gpuSetAlphaTestRef(Renderer* renderer, uint8_t ref)
 {
+	UNIMP();
 	(void)renderer; (void)ref;
 }
 
 static void SWRenderer_gpuSetColorWriteEnable(Renderer* renderer, bool red, bool green, bool blue, bool alpha)
 {
+	UNIMP();
 	(void)renderer; (void)red; (void)green; (void)blue; (void)alpha;
 }
 
 static bool SWRenderer_gpuGetBlendEnable(Renderer* renderer)
 {
+	UNIMP();
 	(void)renderer;
 	return false;
 }
 
 static void SWRenderer_gpuSetFog(Renderer* renderer, bool enable, uint32_t color)
 {
+	UNIMP();
 	(void)renderer; (void)enable; (void)color;
 }
 
 static void SWRenderer_drawTile(Renderer* renderer, RoomTile* tile, float offsetX, float offsetY)
 {
+	UNIMP();
 	(void)renderer; (void)tile; (void)offsetX; (void)offsetY;
 }
 
@@ -715,6 +754,7 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 								 float xscale, float yscale, bool tileX, bool tileY,
 								 float roomW, float roomH, uint32_t color, float alpha)
 {
+	UNIMP();
 	(void)renderer; (void)tpagIndex; (void)originX; (void)originY; (void)x; (void)y;
 	(void)xscale; (void)yscale; (void)tileX; (void)tileY;
 	(void)roomW; (void)roomH; (void)color; (void)alpha;
@@ -722,36 +762,42 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 
 static int32_t SWRenderer_createSurface(Renderer* renderer, int32_t width, int32_t height)
 {
+	UNIMP();
 	(void)renderer; (void)width; (void)height;
 	return 0;
 }
 
 static bool SWRenderer_surfaceExists(Renderer* renderer, int32_t surfaceID)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID;
 	return false;
 }
 
 static bool SWRenderer_setSurfaceTarget(Renderer* renderer, int32_t surfaceID)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID;
 	return false;
 }
 
 static bool SWRenderer_resetSurfaceTarget(Renderer* renderer)
 {
+	UNIMP();
 	(void)renderer;
 	return false;
 }
 
 static float SWRenderer_getSurfaceWidth(Renderer* renderer, int32_t surfaceID)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID;
 	return 0.0f;
 }
 
 static float SWRenderer_getSurfaceHeight(Renderer* renderer, int32_t surfaceID)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID;
 	return 0.0f;
 }
@@ -760,6 +806,7 @@ static void SWRenderer_drawSurface(Renderer* renderer, int32_t surfaceID, float 
 								   float xscale, float yscale, float angleDeg,
 								   uint32_t color, float alpha)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID; (void)x; (void)y;
 	(void)xscale; (void)yscale; (void)angleDeg; (void)color; (void)alpha;
 }
@@ -769,6 +816,7 @@ static void SWRenderer_drawSurfacePart(Renderer* renderer, int32_t surfaceID,
 									   int32_t width, int32_t height,
 									   float xscale, float yscale, uint32_t color, float alpha)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID; (void)x; (void)y; (void)left; (void)top;
 	(void)width; (void)height; (void)xscale; (void)yscale; (void)color; (void)alpha;
 }
@@ -776,16 +824,19 @@ static void SWRenderer_drawSurfacePart(Renderer* renderer, int32_t surfaceID,
 static void SWRenderer_drawSurfaceStretched(Renderer* renderer, int32_t surfaceID,
 											float x, float y, float width, float height)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID; (void)x; (void)y; (void)width; (void)height;
 }
 
 static void SWRenderer_surfaceResize(Renderer* renderer, int32_t surfaceID, int32_t width, int32_t height)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID; (void)width; (void)height;
 }
 
 static void SWRenderer_surfaceFree(Renderer* renderer, int32_t surfaceID)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID;
 }
 
@@ -794,6 +845,7 @@ static void SWRenderer_surfaceCopy(Renderer* renderer,
 								   int32_t SrcSurfaceID, int32_t SrcX, int32_t SrcY,
 								   int32_t SrcW, int32_t SrcH, bool part)
 {
+	UNIMP();
 	(void)renderer;
 	(void)DestSurfaceID; (void)DestX; (void)DestY;
 	(void)SrcSurfaceID; (void)SrcX; (void)SrcY;
@@ -802,6 +854,7 @@ static void SWRenderer_surfaceCopy(Renderer* renderer,
 
 static bool SWRenderer_surfaceGetPixels(Renderer* renderer, int32_t surfaceID, uint8_t* outRGBA)
 {
+	UNIMP();
 	(void)renderer; (void)surfaceID; (void)outRGBA;
 	return false;
 }
@@ -811,6 +864,7 @@ static void SWRenderer_drawTiledPart(Renderer* renderer, int32_t tpagIndex,
 									 float dstX, float dstY, float dstW, float dstH,
 									 uint32_t color, float alpha)
 {
+	UNIMP();
 	(void)renderer; (void)tpagIndex;
 	(void)srcX; (void)srcY; (void)srcW; (void)srcH;
 	(void)dstX; (void)dstY; (void)dstW; (void)dstH;

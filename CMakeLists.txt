@@ -73,6 +73,16 @@ if(PLATFORM STREQUAL "swr")
 	target_sources(butterscotch PRIVATE ${IMAGE_SOURCES})
 	target_link_libraries(butterscotch bz2)
 
+	# add audio for fun
+	option(ENABLE_MINIAUDIO "Enable miniaudio" ON)
+	if(ENABLE_MINIAUDIO)
+		file(GLOB MA_SOURCES src/glfw/ma_audio_system.c)
+		target_sources(butterscotch PRIVATE ${MA_SOURCES})
+		target_include_directories(butterscotch PUBLIC vendor/miniaudio)
+		target_include_directories(butterscotch PUBLIC vendor/stb/vorbis)
+		add_compile_definitions(ENABLE_MINIAUDIO)
+	endif()
+	
 	#### Copied from glfw-- maybe don't belong in the per-platform definitions? ####
 	
     # Butterscotch VM/interpreter profiler

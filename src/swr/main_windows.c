@@ -11,20 +11,24 @@
 #include "vm_builtins.h"
 #include "overlay_file_system.h"
 #include "audio_system.h"
-#include "noop_audio_system.h"
 #include "sw_renderer.h"
+#ifdef ENABLE_MINIAUDIO
+#include "glfw/ma_audio_system.h"
+#else
+#include "noop_audio_system.h"
+#endif
 
 // ========== Configuration ==========
 #define WINDOW_WIDTH 640
 #define WINDOW_HEIGHT 480
 
-static const char* pDataWinPath = "..\\build-win\\data\\data.win";
-static const char* pDataWinDir = ".\\build-win\\data";
-static const char* pSaveDataDir = ".\\save";
+static const char* pDataWinPath = "../build-win/data/data.win";
+static const char* pDataWinDir = "../build-win/data";
+static const char* pSaveDataDir = "../build-win/data";
 
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
-static bool bTraceFrames = true;
+static bool bTraceFrames = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
 static int nBeginningRoom = -1; // 287
@@ -59,11 +63,18 @@ static double swrGetTime()
 	return GetTickCount() / 1000.0;
 }
 
+static uint8_t winKeyToGMLKey(uint8_t wParam)
+{
+	return wParam;
+}
+
 static void keyPressed(uint8_t key)
 {
 	// GML uses key constants which match Win32's
-	if (!keysPressed[key])
+	if (!keysPressed[key]) {
+		fprintf(stderr,"Sending onKeyDown: %d\n", key);
 		RunnerKeyboard_onKeyDown(pRunner->keyboard, key);
+	}
 
 	keysPressed[key] = true;
 }
@@ -87,13 +98,13 @@ static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			return 0;
 		
 		case WM_KEYDOWN:
-			if (wParam < 256)
-				keyPressed((uint8_t) wParam);
+			if (wParam >= 2 && wParam < 256)
+				keyPressed(winKeyToGMLKey(wParam));
 			break;
 		
 		case WM_KEYUP:
-			if (wParam < 256)
-				keyReleased((uint8_t) wParam);
+			if (wParam >= 2 && wParam < 256)
+				keyReleased(winKeyToGMLKey(wParam));
 			break;
 		
 		case WM_ACTIVATE:
@@ -227,7 +238,11 @@ void initializeGame()
 	
 	pOverlayFS = (FileSystem*) OverlayFileSystem_create(pDataWinDir, pSaveDataDir);
 	
+#ifdef ENABLE_MINIAUDIO
+	pAudioSystem = (AudioSystem*) MaAudioSystem_create();
+#else
 	pAudioSystem = (AudioSystem*) NoopAudioSystem_create();
+#endif
 	
 	pRenderer = SWRenderer_create(WINDOW_WIDTH, WINDOW_HEIGHT);
 	
