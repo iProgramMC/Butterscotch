@@ -35,7 +35,7 @@ static int nBeginningRoom = -1; // 287
 static int nProfilerFramesBetween = 0;
 static int nSetSeed = 0;
 static int nExitAtFrame = -1;
-static float fFastForwardSpeed = 0.0f;
+static float fFastForwardSpeed = 1000.0f;
 static float fSpeedMultiplier = 1.0f;
 
 #ifdef ENABLE_VM_OPCODE_PROFILER
@@ -106,7 +106,6 @@ static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		case WM_ACTIVATE:
 			if (wParam == WA_INACTIVE && lParam == hWnd)
 			{
-				memset(keysPressed, 0, sizeof keysPressed);
 				memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
 				memset(keysReleasedNextFrame, 1, sizeof keysReleasedNextFrame);
 			}

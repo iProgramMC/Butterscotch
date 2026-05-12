@@ -1,7 +1,10 @@
 #include <stdio.h>
+#include <limits.h>
 #include "sw_renderer.h"
 #include "text_utils.h"
 #include "image/image_decoder.h"
+
+#define FLT_MAX 99999999999.0f
 
 #define UNUSED __attribute__ ((unused))
 #define FORCE_INLINE static inline __attribute__((always_inline))
@@ -9,6 +12,10 @@
 #define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
 //#define UNIMP() do { } while (0)
 #define UNIMP2() do { } while (0)
+
+#ifndef M_PI
+#define M_PI 3.1415926535897932384626
+#endif
 
 typedef struct
 {
@@ -121,25 +128,25 @@ static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 // Returns true if the texture is ready, false if it failed to decode.
 static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 {
-    if (swr->textures[pageId])
+	if (swr->textures[pageId])
 		return true;
 
-    DataWin* dw = swr->base.dataWin;
-    Texture* txtr = &dw->txtr.textures[pageId];
+	DataWin* dw = swr->base.dataWin;
+	Texture* txtr = &dw->txtr.textures[pageId];
 
-    int w, h;
-    bool gm2022_5 = DataWin_isVersionAtLeast(dw, 2022, 5, 0, 0);
-    uint8_t* pixels = ImageDecoder_decodeToRgba(txtr->blobData, (size_t) txtr->blobSize, gm2022_5, &w, &h);
-    if (pixels == nullptr) {
-        fprintf(stderr, "swr: Failed to decode TXTR page %u\n", pageId);
-        return false;
-    }
+	int w, h;
+	bool gm2022_5 = DataWin_isVersionAtLeast(dw, 2022, 5, 0, 0);
+	uint8_t* pixels = ImageDecoder_decodeToRgba(txtr->blobData, (size_t) txtr->blobSize, gm2022_5, &w, &h);
+	if (pixels == nullptr) {
+		fprintf(stderr, "swr: Failed to decode TXTR page %u\n", pageId);
+		return false;
+	}
 
 	swr->textures[pageId] = createTexture(pixels, w, h);
-    free(pixels);
+	free(pixels);
 	
-    fprintf(stderr, "SWR: Loaded TXTR page %u (%dx%d)\n", pageId, w, h);
-    return true;
+	fprintf(stderr, "SWR: Loaded TXTR page %u (%dx%d)\n", pageId, w, h);
+	return true;
 }
 
 static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
@@ -477,6 +484,22 @@ static void swrDrawSprite(
 		}
 	}
 }
+static void swrDrawSpriteRotated(
+	Renderer* renderer, int dx, int dy, int dw, int dh,
+	SWTexture* texture, int sx, int sy, int sw, int sh,
+	uint32_t tintColor, float alpha,
+	bool flipX, bool flipY,
+	float angle,
+	float pivotX,
+	float pivotY
+)
+{
+	// TODO: Implement
+	(void) angle;
+	(void) pivotX;
+	(void) pivotY;
+	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, tintColor, alpha, flipX, flipY);
+}
 
 static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y,
 								  float originX, float originY, float xscale, float yscale,
@@ -488,9 +511,9 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
-    int16_t pageId = tpag->texturePageId;
-    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+	int16_t pageId = tpag->texturePageId;
+	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 	
 	bool flipX = false, flipY = false;
 	if (xscale < 0) flipX = true, xscale = -xscale;
@@ -514,7 +537,16 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+	if (swrAbs((int)angleDeg) % 360 < 1)
+	{
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+	}
+	else
+	{
+		float pivotX = (x - dx) / dw;
+		float pivotY = (y - dy) / dh;
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, -angleDeg * M_PI / 180.0f, pivotX, pivotY);
+	}
 }
 
 static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
@@ -535,9 +567,9 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	if (yscale < 0) flipY = true, yscale = -yscale;
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
-    int16_t pageId = tpag->texturePageId;
-    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+	int16_t pageId = tpag->texturePageId;
+	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 	
 	int sx = tpag->sourceX + srcOffX;
 	int sy = tpag->sourceY + srcOffY;
@@ -553,7 +585,15 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+	
+	if (swrAbs((int)angleDeg) % 360 < 1)
+	{
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+	}
+	else
+	{
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, -angleDeg * M_PI / 180.0f, pivotX, pivotY);
+	}
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -634,11 +674,11 @@ static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, flo
 
 typedef struct
 {
-    Font* font;
-    TexturePageItem* fontTpag; // single TPAG for regular fonts (NULL for sprite fonts)
+	Font* font;
+	TexturePageItem* fontTpag; // single TPAG for regular fonts (NULL for sprite fonts)
 	int fontTpagIndex;
 	int fontPageId;
-    Sprite* spriteFontSprite; // source sprite for sprite fonts (NULL for regular fonts)
+	Sprite* spriteFontSprite; // source sprite for sprite fonts (NULL for regular fonts)
 } SwrFontState;
 
 static bool swrResolveFontState(SWRenderer* swr, DataWin* dw, Font* font, SwrFontState* state)
@@ -676,17 +716,17 @@ static bool swrResolveGlyph(
 	Font* font = state->font;
 	if (font->isSpriteFont && state->spriteFontSprite != NULL)
 	{
-        Sprite* sprite = state->spriteFontSprite;
-        int32_t glyphIndex = (int32_t) (glyph - font->glyphs);
-        if (0 > glyphIndex ||  glyphIndex >= (int32_t) sprite->textureCount) return false;
+		Sprite* sprite = state->spriteFontSprite;
+		int32_t glyphIndex = (int32_t) (glyph - font->glyphs);
+		if (0 > glyphIndex ||  glyphIndex >= (int32_t) sprite->textureCount) return false;
 
-        int32_t tpagIdx = sprite->tpagIndices[glyphIndex];
-        if (0 > tpagIdx) return false;
+		int32_t tpagIdx = sprite->tpagIndices[glyphIndex];
+		if (0 > tpagIdx) return false;
 
-        TexturePageItem* glyphTpag = &dw->tpag.items[tpagIdx];
-        int16_t pid = glyphTpag->texturePageId;
-        if (0 > pid || (uint32_t) pid >= swr->textureCount) return false;
-        if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pid)) return false;
+		TexturePageItem* glyphTpag = &dw->tpag.items[tpagIdx];
+		int16_t pid = glyphTpag->texturePageId;
+		if (0 > pid || (uint32_t) pid >= swr->textureCount) return false;
+		if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pid)) return false;
 
 		*tpagIndex = tpagIdx;
 		*pageId = glyphTpag->texturePageId;
@@ -721,13 +761,13 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	Renderer* renderer = &swr->base;
 	DataWin* dwin = renderer->dataWin;
 
-    int32_t fontIndex = renderer->drawFont;
-    if (0 > fontIndex || dwin->font.count <= (uint32_t) fontIndex) return;
+	int32_t fontIndex = renderer->drawFont;
+	if (0 > fontIndex || dwin->font.count <= (uint32_t) fontIndex) return;
 
-    Font* font = &dwin->font.fonts[fontIndex];
+	Font* font = &dwin->font.fonts[fontIndex];
 	
-    SwrFontState fontState;
-    if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
+	SwrFontState fontState;
+	if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
 	
 	// TODO: do we need to mirror the way the text scrolls too?!
 	bool flipX = false, flipY = false;
@@ -738,52 +778,52 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	int lineCount = TextUtils_countLines(text, textLen);
 	float lineStride = TextUtils_lineStride(font);
 
-    // Vertical alignment offset
-    float totalHeight = (float) lineCount * lineStride;
-    float valignOffset = 0;
-    if (renderer->drawValign == 1) valignOffset = -totalHeight / 2.0f;
-    else if (renderer->drawValign == 2) valignOffset = -totalHeight;
+	// Vertical alignment offset
+	float totalHeight = (float) lineCount * lineStride;
+	float valignOffset = 0;
+	if (renderer->drawValign == 1) valignOffset = -totalHeight / 2.0f;
+	else if (renderer->drawValign == 2) valignOffset = -totalHeight;
 
-    // Iterate through lines. HTML5 subtracts ascenderOffset from the per-line y offset
-    // (see yyFont.GR_Text_Draw), shifting glyphs up so the baseline aligns with the drawn y.
-    float cursorY = valignOffset - (float) font->ascenderOffset;
-    int32_t lineStart = 0;
+	// Iterate through lines. HTML5 subtracts ascenderOffset from the per-line y offset
+	// (see yyFont.GR_Text_Draw), shifting glyphs up so the baseline aligns with the drawn y.
+	float cursorY = valignOffset - (float) font->ascenderOffset;
+	int32_t lineStart = 0;
 
-    for (int32_t lineIdx = 0; lineCount > lineIdx; lineIdx++) {
-        // Find end of current line
-        int32_t lineEnd = lineStart;
-        while (textLen > lineEnd && !TextUtils_isNewlineChar(text[lineEnd])) {
-            lineEnd++;
-        }
-        int32_t lineLen = lineEnd - lineStart;
+	for (int32_t lineIdx = 0; lineCount > lineIdx; lineIdx++) {
+		// Find end of current line
+		int32_t lineEnd = lineStart;
+		while (textLen > lineEnd && !TextUtils_isNewlineChar(text[lineEnd])) {
+			lineEnd++;
+		}
+		int32_t lineLen = lineEnd - lineStart;
 
-        // Horizontal alignment offset for this line
-        float lineWidth = TextUtils_measureLineWidth(font, text + lineStart, lineLen);
-        float halignOffset = 0;
-        if (renderer->drawHalign == 1) halignOffset = -lineWidth / 2.0f;
-        else if (renderer->drawHalign == 2) halignOffset = -lineWidth;
+		// Horizontal alignment offset for this line
+		float lineWidth = TextUtils_measureLineWidth(font, text + lineStart, lineLen);
+		float halignOffset = 0;
+		if (renderer->drawHalign == 1) halignOffset = -lineWidth / 2.0f;
+		else if (renderer->drawHalign == 2) halignOffset = -lineWidth;
 
-        float cursorX = halignOffset;
+		float cursorX = halignOffset;
 
-        // Render each glyph in the line - decode each codepoint once and carry it forward as next iteration's ch (also used for kerning)
-        int32_t pos = 0;
-        uint16_t ch = 0;
-        bool hasCh = false;
-        if (lineLen > pos) {
-            ch = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
-            hasCh = true;
-        }
+		// Render each glyph in the line - decode each codepoint once and carry it forward as next iteration's ch (also used for kerning)
+		int32_t pos = 0;
+		uint16_t ch = 0;
+		bool hasCh = false;
+		if (lineLen > pos) {
+			ch = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
+			hasCh = true;
+		}
 
-        while (hasCh) {
-            FontGlyph* glyph = TextUtils_findGlyph(font, ch);
+		while (hasCh) {
+			FontGlyph* glyph = TextUtils_findGlyph(font, ch);
 
-            uint16_t nextCh = 0;
-            bool hasNext = lineLen > pos;
-            if (hasNext) nextCh = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
+			uint16_t nextCh = 0;
+			bool hasNext = lineLen > pos;
+			if (hasNext) nextCh = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
 
-            if (glyph != nullptr) {
-                bool drewSuccessfully = false;
-                if (glyph->sourceWidth != 0 && glyph->sourceHeight != 0) {
+			if (glyph != nullptr) {
+				bool drewSuccessfully = false;
+				if (glyph->sourceWidth != 0 && glyph->sourceHeight != 0) {
 					int fontTpagIndex = 0, pageId = 0;
 					int sx, sy, sw, sh, dx, dy, dw, dh;
 					if (swrResolveGlyph(swr, dwin, &fontState, glyph, (int) cursorX, (int) cursorY,
@@ -797,28 +837,28 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						SWTexture* texture = swr->textures[pageId];
 						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 						
-                        drewSuccessfully = true;
+						drewSuccessfully = true;
 					}
-                }
+				}
 
-                cursorX += glyph->shift;
-                if (drewSuccessfully && hasNext) {
-                    cursorX += TextUtils_getKerningOffset(glyph, nextCh);
-                }
-            }
+				cursorX += glyph->shift;
+				if (drewSuccessfully && hasNext) {
+					cursorX += TextUtils_getKerningOffset(glyph, nextCh);
+				}
+			}
 
-            ch = nextCh;
-            hasCh = hasNext;
-        }
+			ch = nextCh;
+			hasCh = hasNext;
+		}
 
-        cursorY += lineStride;
-        // Skip past the newline, treating \r\n and \n\r as single breaks
-        if (textLen > lineEnd) {
-            lineStart = TextUtils_skipNewline(text, lineEnd, textLen);
-        } else {
-            lineStart = lineEnd;
-        }
-    }
+		cursorY += lineStride;
+		// Skip past the newline, treating \r\n and \n\r as single breaks
+		if (textLen > lineEnd) {
+			lineStart = TextUtils_skipNewline(text, lineEnd, textLen);
+		} else {
+			lineStart = lineEnd;
+		}
+	}
 }
 
 static void SWRenderer_drawText(Renderer* renderer, const char* text, float x, float y,
@@ -928,67 +968,67 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 								 float roomW, float roomH, uint32_t color, float alpha)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
-    DataWin* dwin = renderer->dataWin;
+	DataWin* dwin = renderer->dataWin;
 
-    if (0 > tpagIndex || dwin->tpag.count <= (uint32_t) tpagIndex) return;
+	if (0 > tpagIndex || dwin->tpag.count <= (uint32_t) tpagIndex) return;
 
-    TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
-    int16_t pageId = tpag->texturePageId;
-    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
+	int16_t pageId = tpag->texturePageId;
+	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 
-    float axScale = fabsf(xscale);
-    float ayScale = fabsf(yscale);
-    float tileW = (float) tpag->boundingWidth * axScale;
-    float tileH = (float) tpag->boundingHeight * ayScale;
-    if (0 >= tileW || 0 >= tileH) return;
+	float axScale = fabsf(xscale);
+	float ayScale = fabsf(yscale);
+	float tileW = (float) tpag->boundingWidth * axScale;
+	float tileH = (float) tpag->boundingHeight * ayScale;
+	if (0 >= tileW || 0 >= tileH) return;
 	
 	bool flipX = false, flipY = false;
 	if (xscale < 0) flipX = true, xscale = -xscale;
 	if (yscale < 0) flipY = true, yscale = -yscale;
 
-    float startX, endX, startY, endY;
-    if (tileX) {
-        startX = fmodf(x - originX * axScale, tileW);
-        if (startX > 0) startX -= tileW;
-        endX = roomW;
-    } else {
-        startX = x - originX * axScale;
-        endX = startX + tileW;
-    }
-    if (tileY) {
-        startY = fmodf(y - originY * ayScale, tileH);
-        if (startY > 0) startY -= tileH;
-        endY = roomH;
-    } else {
-        startY = y - originY * ayScale;
-        endY = startY + tileH;
-    }
+	float startX, endX, startY, endY;
+	if (tileX) {
+		startX = fmodf(x - originX * axScale, tileW);
+		if (startX > 0) startX -= tileW;
+		endX = roomW;
+	} else {
+		startX = x - originX * axScale;
+		endX = startX + tileW;
+	}
+	if (tileY) {
+		startY = fmodf(y - originY * ayScale, tileH);
+		if (startY > 0) startY -= tileH;
+		endY = roomH;
+	} else {
+		startY = y - originY * ayScale;
+		endY = startY + tileH;
+	}
 	
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
 	int sw = tpag->sourceWidth;
 	int sh = tpag->sourceHeight;
 
-    int localX0 = tpag->targetX - originX;
-    int localY0 = tpag->targetY - originY;
-    int localX1 = localX0 + tpag->sourceWidth;
-    int localY1 = localY0 + tpag->sourceHeight;
-    int sx0 = xscale * localX0;
-    int sy0 = yscale * localY0;
-    int sx1 = xscale * localX1;
-    int sy1 = yscale * localY1;
+	int localX0 = tpag->targetX - originX;
+	int localY0 = tpag->targetY - originY;
+	int localX1 = localX0 + tpag->sourceWidth;
+	int localY1 = localY0 + tpag->sourceHeight;
+	int sx0 = xscale * localX0;
+	int sy0 = yscale * localY0;
+	int sx1 = xscale * localX1;
+	int sy1 = yscale * localY1;
 
-    for (int dy = startY; endY > dy; dy += tileH) {
-        int cy = dy + (int)(originY * ayScale);
-        int vy0 = cy + sy0;
-        int vy1 = cy + sy1;
+	for (int dy = startY; endY > dy; dy += tileH) {
+		int cy = dy + (int)(originY * ayScale);
+		int vy0 = cy + sy0;
+		int vy1 = cy + sy1;
 		int dh = vy1 - vy0;
 
-        for (int dx = startX; endX > dx; dx += tileW) {
-            int cx = dx + (int)(originX * axScale);
-            int vx0 = cx + sx0;
-            int vx1 = cx + sx1;
+		for (int dx = startX; endX > dx; dx += tileW) {
+			int cx = dx + (int)(originX * axScale);
+			int vx0 = cx + sx0;
+			int vx1 = cx + sx1;
 			int dw = vx1 - vx0;
 
 			if (flipX) dx -= dw;
