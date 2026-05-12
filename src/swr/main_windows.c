@@ -57,6 +57,8 @@ static bool bDebugShowCollisionMasks = false;
 static double lastFrameTime;
 
 static bool keysPressed[256];
+static bool keysPressedNextFrame[256];
+static bool keysReleasedNextFrame[256];
 
 static double swrGetTime()
 {
@@ -65,27 +67,20 @@ static double swrGetTime()
 
 static uint8_t winKeyToGMLKey(uint8_t wParam)
 {
+	// GML uses key constants which match Win32's
 	return wParam;
 }
 
 static void keyPressed(uint8_t key)
 {
-	// GML uses key constants which match Win32's
-	if (!keysPressed[key]) {
-		fprintf(stderr,"Sending onKeyDown: %d\n", key);
-		RunnerKeyboard_onKeyDown(pRunner->keyboard, key);
-	}
-
 	keysPressed[key] = true;
+	keysPressedNextFrame[key] = true;
 }
 
 static void keyReleased(uint8_t key)
 {
-	// GML uses key constants which match Win32's
-	if (keysPressed[key])
-		RunnerKeyboard_onKeyUp(pRunner->keyboard, key);
-
 	keysPressed[key] = false;
+	keysReleasedNextFrame[key] = true;
 }
 
 static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -109,7 +104,11 @@ static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		
 		case WM_ACTIVATE:
 			if (wParam == WA_INACTIVE && lParam == hWnd)
+			{
 				memset(keysPressed, 0, sizeof keysPressed);
+				memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
+				memset(keysReleasedNextFrame, 1, sizeof keysReleasedNextFrame);
+			}
 			break;
 	}
 	
@@ -267,6 +266,17 @@ void updateGame()
 	Renderer* renderer = pRenderer;
 	
 	RunnerKeyboard_beginFrame(runner->keyboard);
+	
+	for (int i = 0; i < 256; i++)
+	{
+		if (keysPressedNextFrame[i])
+			RunnerKeyboard_onKeyDown(runner->keyboard, i);
+		if (keysReleasedNextFrame[i])
+			RunnerKeyboard_onKeyUp(runner->keyboard, i);
+	}
+	
+	memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
+	memset(keysReleasedNextFrame, 0, sizeof keysReleasedNextFrame);
 
 	// Debug key bindings
 	if (runner->debugMode) {

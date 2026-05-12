@@ -616,10 +616,10 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 					if (swrResolveGlyph(swr, dwin, &fontState, glyph, (int) cursorX, (int) cursorY,
 							&fontTpagIndex, &pageId, &sx, &sy, &sw, &sh, &dx, &dy))
 					{
-						dx += (int) x;
-						dy += (int) y;
-						dw = glyph->sourceWidth;
-						dh = glyph->sourceHeight;
+						dx = (int)(xscale * dx) + (int) x;
+						dy = (int)(xscale * dy) + (int) y;
+						dw = (int)(xscale * glyph->sourceWidth);
+						dh = (int)(yscale * glyph->sourceHeight);
 						
 						SWTexture* texture = swr->textures[pageId];
 						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
