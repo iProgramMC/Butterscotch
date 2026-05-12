@@ -27,6 +27,7 @@ static bool bDebugMode = true;
 static bool bTraceFrames = true;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
+static int nBeginningRoom = -1; // 287
 static int nProfilerFramesBetween = 0;
 static int nSetSeed = 0;
 static int nExitAtFrame = -1;
@@ -393,6 +394,15 @@ void updateGame()
 	// Only swap when there isn't a room change to match the original runner.
 	if (runner->pendingRoom == -1) {
 		swrSwapBuffers();
+	}
+	
+	//DEBUG: enter a different room from the intro
+	if (runner->pendingRoom != -1 && nBeginningRoom != -1) {
+		static bool a = false;
+		if (!a) {
+			a = true;
+			runner->pendingRoom = nBeginningRoom;
+		}
 	}
 	Runner_handlePendingRoomChange(runner);
 

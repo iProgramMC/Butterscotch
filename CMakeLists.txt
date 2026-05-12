@@ -67,6 +67,11 @@ if(PLATFORM STREQUAL "swr")
 	
     # stb_image
     target_include_directories(butterscotch PUBLIC vendor/stb/image)
+	
+	# add image decoder
+	file(GLOB IMAGE_SOURCES src/image/*.c)
+	target_sources(butterscotch PRIVATE ${IMAGE_SOURCES})
+	target_link_libraries(butterscotch bz2)
 
 	#### Copied from glfw-- maybe don't belong in the per-platform definitions? ####
 	

@@ -1,5 +1,13 @@
-#include "sw_renderer.h"
 #include <stdio.h>
+#include "sw_renderer.h"
+#include "image/image_decoder.h"
+
+typedef struct
+{
+	uint32_t* buffer;
+	uint16_t width, height;
+}
+SWTexture;
 
 typedef struct
 {
@@ -11,10 +19,62 @@ typedef struct
 	// Framebuffer
 	uint32_t* fb;
 	uint16_t fbPitch;
+	
+	SWTexture** textures;
+	size_t textureCount;
 }
 SWRenderer;
 
 void Runner_setNextFrame(uint32_t* framebuffer, int width, int height);
+
+static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
+{
+	SWTexture* txt = safeCalloc(1, sizeof(SWTexture));
+	txt->buffer = safeCalloc(width * height, sizeof(uint32_t));
+	
+	const uint32_t* rgbaSrc = (const uint32_t*) srcBuffer;
+	
+	//swap R and B channels -- GM uses RGBA, the SWR buffer is BGRA
+	size_t sz = width * height;
+	for (size_t i = 0; i < sz; i++)
+	{
+		uint32_t p = rgbaSrc[i];
+		uint32_t np = p & 0xFF00FF00;
+		np |= (p & 0xFF) << 16;
+		np |= (p >> 16) & 0xFF;
+		txt->buffer[i] = np;
+	}
+	
+	txt->width = (uint16_t) width;
+	txt->height = (uint16_t) height;
+	
+	return txt;
+}
+
+// Lazily decodes and uploads a TXTR page on first access.
+// Returns true if the texture is ready, false if it failed to decode.
+static bool ensureTextureLoaded(SWRenderer* swr, uint32_t pageId)
+{
+    if (swr->textures[pageId])
+		return true;
+
+    DataWin* dw = swr->base.dataWin;
+    Texture* txtr = &dw->txtr.textures[pageId];
+
+    int w, h;
+    bool gm2022_5 = DataWin_isVersionAtLeast(dw, 2022, 5, 0, 0);
+    uint8_t* pixels = ImageDecoder_decodeToRgba(txtr->blobData, (size_t) txtr->blobSize, gm2022_5, &w, &h);
+    if (pixels == nullptr) {
+        fprintf(stderr, "swr: Failed to decode TXTR page %u\n", pageId);
+        return false;
+    }
+
+	swr->textures[pageId] = createTexture(pixels, w, h);
+    free(pixels);
+	
+    fprintf(stderr, "SWR: Loaded TXTR page %u (%dx%d)\n", pageId, w, h);
+    return true;
+}
 
 static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 {
@@ -22,8 +82,13 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	
 	renderer->dataWin = dataWin;
 	
+	//allocate frame buffer
 	swr->fb = safeCalloc(swr->width * swr->height, sizeof(uint32_t));
 	swr->fbPitch = swr->width;
+	
+	//allocate texture buffer
+	swr->textureCount = dataWin->txtr.count;
+	swr->textures = safeCalloc(swr->textureCount, sizeof(SWTexture*));
 	
 	fprintf(stderr, "SWRenderer initialized.\n");
 }
@@ -87,6 +152,55 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	(void)renderer; (void)tpagIndex; (void)x; (void)y;
 	(void)originX; (void)originY; (void)xscale; (void)yscale;
 	(void)angleDeg; (void)color; (void)alpha;
+	
+	SWRenderer* swr = (SWRenderer*) renderer;
+	DataWin* dwin = renderer->dataWin;
+
+	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
+
+	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
+    int16_t pageId = tpag->texturePageId;
+    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+    if (!ensureTextureLoaded(swr, (uint32_t) pageId)) return;
+	
+	int sx = tpag->sourceX;
+	int sy = tpag->sourceY;
+	int sw = tpag->sourceWidth;
+	int sh = tpag->sourceHeight;
+	
+	//quick & dirty for now
+	int dw = (int)(xscale * sw);
+	int dh = (int)(yscale * sh);
+	
+	dw=sw; dh=sh;
+	
+	int dx = (int)(tpag->targetX - originX + x);
+	int dy = (int)(tpag->targetY - originY + y);
+	
+	//adjust for out of bounds
+	if (dx + sw <= 0) return;
+	if (dy + sh <= 0) return;
+	if (dx >= swr->width) return;
+	if (dy >= swr->height) return;
+	
+	if (dx < 0) { dw += dx; sx -= dx; sw += dx; dx = 0; }
+	if (dy < 0) { dh += dy; sy -= dy; sy += dy; dy = 0; }
+	if (sx < 0) { sw += sx; dx -= sx; sx = 0; }
+	if (sy < 0) { sh += sy; dy -= sy; sy = 0; }
+	
+	SWTexture* swt = swr->textures[pageId];
+	
+	if (dw + dx > swr->width)  { int odw = dw; dw = swr->width  - dx; sw = odw - dw; }
+	if (dh + dy > swr->height) { int odh = dh; dh = swr->height - dy; sh = odh - dh; }
+	
+	for (int y = 0; y < dh; y++)
+	{
+		uint32_t* dstline = &swr->fb[(dy + y) * swr->fbPitch + dx];
+		uint32_t* srcline = &swt->buffer[(sy + y) * swt->width + sx];
+		
+		for (int x = 0; x < dw; x++)
+			dstline[x] = srcline[x];
+	}
 }
  
 static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
@@ -97,6 +211,8 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	(void)renderer; (void)tpagIndex; (void)srcOffX; (void)srcOffY; (void)srcW; (void)srcH;
 	(void)x; (void)y; (void)xscale; (void)yscale; (void)angleDeg;
 	(void)pivotX; (void)pivotY; (void)color; (void)alpha;
+	
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -106,6 +222,7 @@ static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
 	(void)renderer; (void)tpagIndex;
 	(void)x1; (void)y1; (void)x2; (void)y2;
 	(void)x3; (void)y3; (void)x4; (void)y4; (void)alpha;
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -113,6 +230,7 @@ static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, flo
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)color; (void)alpha; (void)outline;
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawRectangleColor(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -121,6 +239,7 @@ static void SWRenderer_drawRectangleColor(Renderer* renderer, float x1, float y1
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)color1; (void)color2; (void)color3; (void)color4; (void)alpha; (void)outline;
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -128,12 +247,14 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									float x3, float y3, bool outline)
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
+	fprintf(stderr, "%s\n", __func__);
 }
  
 static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
