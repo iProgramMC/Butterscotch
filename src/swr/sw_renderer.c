@@ -432,13 +432,13 @@ static void swrDrawSprite(
 	
 	//okay, now we can finally get on with rendering
 	
-	int ixs, oxs, iys, oys;
-	if (flipX) ixs = dw - 1, oxs = -1; else ixs = 0, oxs = 1;
-	if (flipY) iys = dh - 1, oys = -1; else iys = 0, oys = 1;
-	
+	int ixs = 0, oxs = 1, iys = 0, oys = 1;
+	if (flipX) ixs = dw - 1, oxs = -1;
+	if (flipY) iys = dh - 1, oys = -1;
+
 	if (sw == dw)
 	{
-		for (int y = 0, ys = iys; y < dh; y++, iys += oys)
+		for (int y = 0, ys = iys; y < dh; y++, ys += oys)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
@@ -446,7 +446,7 @@ static void swrDrawSprite(
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
-				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
+				srcline = &texture->buffer[(sy + (int)((long)ys*osh/odh)) * texture->width + sx];
 			
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
@@ -458,7 +458,7 @@ static void swrDrawSprite(
 	}
 	else
 	{
-		for (int y = 0, ys = iys; y < dh; y++, iys += oys)
+		for (int y = 0, ys = iys; y < dh; y++, ys += oys)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
@@ -466,7 +466,7 @@ static void swrDrawSprite(
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
-				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
+				srcline = &texture->buffer[(sy + (int)((long)ys*osh/odh)) * texture->width + sx];
 			
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
