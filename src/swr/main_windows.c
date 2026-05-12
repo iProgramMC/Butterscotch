@@ -28,7 +28,7 @@ static const char* pSaveDataDir = "../build-win/data";
 
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
-static bool bTraceFrames = true;
+static bool bTraceFrames = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
 static int nBeginningRoom = -1; // 287
@@ -54,6 +54,7 @@ static Renderer* pRenderer;
 static bool bWantToQuit = false;
 static bool bDebugPaused = false;
 static bool bDebugShowCollisionMasks = false;
+static bool bShowFPS = true;
 static double lastFrameTime;
 
 static bool keysPressed[256];
@@ -152,6 +153,33 @@ static void swrSwapBuffers()
 		&bmi,
 		DIB_RGB_COLORS
 	);
+	
+	if (bShowFPS)
+	{
+		static int fps = 0, fpsCount = 0;
+		static int tickLastCounted = 0;
+		
+		if (GetTickCount() - tickLastCounted >= 1000)
+		{
+			if (tickLastCounted == 0)
+				tickLastCounted = GetTickCount();
+			else
+				tickLastCounted += 1000;
+			
+			fps = fpsCount;
+			fpsCount = 0;
+		}
+		
+		fpsCount++;
+		
+		char buffer[64];
+		snprintf(buffer, sizeof buffer, "FPS: %d\n", fps);
+		COLORREF oldColor = SetTextColor(hdc, RGB(255,255,255));
+		int oldBkMode = SetBkMode(hdc, TRANSPARENT);
+		TextOutA(hdc, 0, 0, buffer, (int) strlen(buffer));
+		SetTextColor(hdc, oldColor);
+		SetBkMode(hdc, oldBkMode);
+	}
 
 	ReleaseDC(hWnd, hdc);
 }

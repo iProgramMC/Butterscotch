@@ -6,8 +6,8 @@
 #define UNUSED __attribute__ ((unused))
 #define FORCE_INLINE static inline __attribute__((always_inline))
 
-#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
-//#define UNIMP() do { } while (0)
+//#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
+#define UNIMP() do { } while (0)
 
 typedef struct
 {
@@ -409,11 +409,32 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 									  float x, float y, float xscale, float yscale, float angleDeg,
 									  float pivotX, float pivotY, uint32_t color, float alpha)
 {
-	(void)renderer; (void)tpagIndex; (void)srcOffX; (void)srcOffY; (void)srcW; (void)srcH;
-	(void)x; (void)y; (void)xscale; (void)yscale; (void)angleDeg;
-	(void)pivotX; (void)pivotY; (void)color; (void)alpha;
+	(void)angleDeg;
+	(void)pivotX; (void)pivotY;
 	
-	UNIMP();
+	SWRenderer* swr = (SWRenderer*) renderer;
+	DataWin* dwin = renderer->dataWin;
+
+	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
+
+	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
+    int16_t pageId = tpag->texturePageId;
+    if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+	
+	int sx = tpag->sourceX + srcOffX;
+	int sy = tpag->sourceY + srcOffY;
+	int sw = srcW;
+	int sh = srcH;
+	
+	int dx = (int)x;
+	int dy = (int)y;
+	int dw = (int)(xscale * sw);
+	int dh = (int)(yscale * sh);
+	
+	SWTexture* texture = swr->textures[pageId];
+	
+	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -927,7 +948,7 @@ static RendererVtable swrVtable =
 	.gpuSetColorWriteEnable  = SWRenderer_gpuSetColorWriteEnable,
 	.gpuGetBlendEnable       = SWRenderer_gpuGetBlendEnable,
 	.gpuSetFog               = SWRenderer_gpuSetFog,
-	.drawTile                = SWRenderer_drawTile,
+	.drawTile                = NULL,
 	.drawTiled               = SWRenderer_drawTiled,
 	.createSurface           = SWRenderer_createSurface,
 	.surfaceExists           = SWRenderer_surfaceExists,
