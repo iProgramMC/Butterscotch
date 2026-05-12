@@ -574,7 +574,6 @@ int main(int argc, char* argv[])
 	{
 		while (PeekMessage (&msg, NULL, 0, 0, PM_REMOVE) > 0)
 		{
-			fprintf(stderr, "Handling message: %d\n", msg.message);
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		}
