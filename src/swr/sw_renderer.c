@@ -264,20 +264,20 @@ static void SWRenderer_endGUI(Renderer* renderer)
 	UNIMP2();
 }
 
-static void swrTransformPosIfNeeded(SWRenderer* swr, int* dx, int* dy)
+static void swrTransformPosIfNeeded(SWRenderer* swr, float* dx, float* dy)
 {
 	if (!swr->viewActive) return;
 	
-	if (dx) { *dx -= swr->viewX; *dx = (int)((long) *dx * swr->width  / swr->viewW); }
-	if (dy) { *dy -= swr->viewY; *dy = (int)((long) *dy * swr->height / swr->viewH); }
+	if (dx) { *dx -= swr->viewX; *dx = *dx * ((float)swr->width  / swr->viewW); }
+	if (dy) { *dy -= swr->viewY; *dy = *dy * ((float)swr->height / swr->viewH); }
 }
 
-static void swrTransformSizeIfNeeded(SWRenderer* swr, int* dx, int* dy)
+static void swrTransformSizeIfNeeded(SWRenderer* swr, float* dx, float* dy)
 {
 	if (!swr->viewActive || !swr->viewW || !swr->viewH) return;
 	
-	if (dx) *dx = (int)((long) *dx * swr->width  / swr->viewW);
-	if (dy) *dy = (int)((long) *dy * swr->height / swr->viewH);
+	if (dx) *dx *= ((float)swr->width  / swr->viewW);
+	if (dy) *dy *= ((float)swr->height / swr->viewH);
 }
 
 FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, float alpha)
@@ -290,13 +290,9 @@ FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color,
 	alphaBlend(&swr->fb[y * swr->fbPitch + x], color, alpha);
 }
 
-static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t color, float alpha, bool xform)
+static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uint32_t color, float alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
-	if (xform) {
-		swrTransformPosIfNeeded(swr, &dx, &dy);
-		swrTransformSizeIfNeeded(swr, &dw, NULL);
-	}
 	
 	if (dy < 0) return;
 	if (dy >= swr->height) return;
@@ -309,13 +305,21 @@ static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t co
 		alphaBlend(&line[i], color, alpha);
 }
 
-static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t color, float alpha, bool xform)
+static void swrDrawHLine(Renderer* renderer, float dx, float dy, float dw, uint32_t color, float alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
-	if (xform) {
-		swrTransformPosIfNeeded(swr, &dx, &dy);
-		swrTransformSizeIfNeeded(swr, NULL, &dh);
-	}
+	float thickness = 1;
+
+	swrTransformPosIfNeeded(swr, &dx, &dy);
+	swrTransformSizeIfNeeded(swr, &dw, &thickness);
+
+	// TODO: use thickness
+	swrDrawHLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dw), color, alpha);
+}
+
+static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uint32_t color, float alpha)
+{
+	SWRenderer *swr = (SWRenderer*) renderer;
 	
 	if (dx < 0) return;
 	if (dx >= swr->width) return;
@@ -330,31 +334,36 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	}
 }
 
-static void swrDrawRectangle(Renderer* renderer, int x1, int y1, int x2, int y2, uint32_t color, float alpha)
+static void swrDrawVLine(Renderer* renderer, float dx, float dy, float dh, uint32_t color, float alpha)
 {
-	swrDrawHLine(renderer, x1, y1, (x2 - x1) + 1, color, alpha, true);
-	swrDrawHLine(renderer, x1, y2, (x2 - x1) + 1, color, alpha, true);
-	swrDrawVLine(renderer, x1, y1, (y2 - y1) + 1, color, alpha, true);
-	swrDrawVLine(renderer, x2, y1, (y2 - y1) + 1, color, alpha, true);
+	SWRenderer *swr = (SWRenderer*) renderer;
+	float thickness = 1;
+
+	swrTransformPosIfNeeded(swr, &dx, &dy);
+	swrTransformSizeIfNeeded(swr, &thickness, &dh);
+	
+	// TODO: use thickness
+	swrDrawVLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dh), color, alpha);
 }
 
-static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, float alpha, bool xform)
+static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha)
 {
-	SWRenderer* swr = (SWRenderer*) renderer;
-	if (xform) {
-		swrTransformPosIfNeeded(swr, &x1, &y1);
-		swrTransformPosIfNeeded(swr, &x2, &y2);
-		swrTransformSizeIfNeeded(swr, &width, NULL);
-	}
-	
+	swrDrawHLine(renderer, x1, y1, (x2 - x1) + 1, color, alpha);
+	swrDrawHLine(renderer, x1, y2, (x2 - x1) + 1, color, alpha);
+	swrDrawVLine(renderer, x1, y1, (y2 - y1) + 1, color, alpha);
+	swrDrawVLine(renderer, x2, y1, (y2 - y1) + 1, color, alpha);
+}
+
+static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, float alpha)
+{
 	if (x1 == x2)
 	{
-		swrDrawVLine(renderer, x1, swrMin(y1, y2), swrAbs(y1 - y2), color, alpha, false);
+		swrDrawVLineInt(renderer, x1, swrMin(y1, y2), swrAbs(y1 - y2), color, alpha);
 		return;
 	}
 	if (y1 == y2)
 	{
-		swrDrawHLine(renderer, swrMin(x1, x2), y1, swrAbs(x1 - x2), color, alpha, false);
+		swrDrawHLineInt(renderer, swrMin(x1, x2), y1, swrAbs(x1 - x2), color, alpha);
 		return;
 	}
 	
@@ -422,16 +431,22 @@ static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int 
 	}
 }
 
-static void swrDrawSprite(
+static void swrDrawLine(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color, float alpha)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	swrTransformPosIfNeeded(swr, &x1, &y1);
+	swrTransformPosIfNeeded(swr, &x2, &y2);
+	swrTransformSizeIfNeeded(swr, &width, NULL);
+	swrDrawLineInt(renderer, swrFloor(x1), swrFloor(y1), swrCeiling(x2), swrCeiling(y2), swrCeiling(width), color, alpha);
+}
+
+static void swrDrawSpriteInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
 	uint32_t tintColor, float alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
-	
-	swrTransformPosIfNeeded(swr, &dx, &dy);
-	swrTransformSizeIfNeeded(swr, &dw, &dh);
 	
 	tintColor = convertColor(tintColor);
 	
@@ -528,7 +543,32 @@ static void swrDrawSprite(
 	}
 }
 
-static void swrDrawSpriteRotated(
+static void swrDrawSprite(
+	Renderer* renderer, float dx, float dy, float dw, float dh,
+	SWTexture* texture, int sx, int sy, int sw, int sh,
+	uint32_t tintColor, float alpha
+)
+{
+	SWRenderer *swr = (SWRenderer*) renderer;
+	
+	swrTransformPosIfNeeded(swr, &dx, &dy);
+	swrTransformSizeIfNeeded(swr, &dw, &dh);
+	
+	swrDrawSpriteInternal(
+		renderer,
+		swrFloor(dx),
+		swrFloor(dy),
+		swrCeiling(dw),
+		swrCeiling(dh),
+		texture,
+		sx, sy,
+		sw, sh,
+		tintColor,
+		alpha
+	);
+}
+
+static void swrDrawSpriteRotatedInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
 	uint32_t tintColor, float alpha,
@@ -539,9 +579,6 @@ static void swrDrawSpriteRotated(
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	float angleRad = -angleDeg * M_PI / 180.0f;
-	
-	swrTransformPosIfNeeded(swr, &dx, &dy);
-	swrTransformSizeIfNeeded(swr, &dw, &dh);
 	
 	tintColor = convertColor(tintColor);
 	
@@ -643,6 +680,37 @@ static void swrDrawSpriteRotated(
 	}
 }
 
+static void swrDrawSpriteRotated(
+	Renderer* renderer, float dx, float dy, float dw, float dh,
+	SWTexture* texture, int sx, int sy, int sw, int sh,
+	uint32_t tintColor, float alpha,
+	float angleDeg,
+	float pivotX,
+	float pivotY
+)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	swrTransformPosIfNeeded(swr, &dx, &dy);
+	swrTransformSizeIfNeeded(swr, &dw, &dh);
+	
+	swrDrawSpriteRotatedInternal(
+		renderer,
+		swrFloor(dx),
+		swrFloor(dy),
+		swrCeiling(dw),
+		swrCeiling(dh),
+		texture,
+		sx, sy,
+		sw, sh,
+		tintColor,
+		alpha,
+		angleDeg,
+		pivotX,
+		pivotY
+	);
+}
+
 static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x, float y,
 								  float originX, float originY, float xscale, float yscale,
 								  float angleDeg, uint32_t color, float alpha)
@@ -662,14 +730,14 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	int sw = tpag->sourceWidth;
 	int sh = tpag->sourceHeight;
 	
-	int dx = (int)(tpag->targetX - originX);
-	int dy = (int)(tpag->targetY - originY);
+	float dx = (float)(tpag->targetX - originX);
+	float dy = (float)(tpag->targetY - originY);
 	int dw = (int)(xscale * sw);
 	int dh = (int)(yscale * sh);
-	dx = (int)(dx * xscale);
-	dy = (int)(dy * yscale);
-	dx += (int) x;
-	dy += (int) y;
+	dx *= xscale;
+	dy *= yscale;
+	dx += x;
+	dy += y;
 
 	SWTexture* texture = swr->textures[pageId];
 	
@@ -709,10 +777,10 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	int sw = srcW;
 	int sh = srcH;
 	
-	int dx = (int)x;
-	int dy = (int)y;
-	int dw = (int)(xscale * sw);
-	int dh = (int)(yscale * sh);
+	float dx = x;
+	float dy = y;
+	int dw = swrCeiling(xscale * sw);
+	int dh = swrCeiling(yscale * sh);
 	if (flipX) dx -= dw;
 	if (flipY) dy -= dh;
 	
@@ -741,26 +809,26 @@ static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
 static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									 uint32_t color, float alpha, bool outline)
 {
-	(void)alpha;
 	color = convertColor(color);
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
 	if (outline)
 	{
-		swrDrawRectangle(renderer, (int) x1, (int) y1, (int) x2, (int) y2, color, alpha);
+		swrDrawRectangle(renderer, x1, y1, x2, y2, color, alpha);
 	}
 	else
 	{
-		int x1i = (int)x1, x2i = (int)x2, y1i = (int)y1, y2i = (int)y2;
+		swrTransformPosIfNeeded(swr, &x1, &y1);
+		swrTransformPosIfNeeded(swr, &x2, &y2);
+
+		int x1i = swrFloor(x1), x2i = swrCeiling(x2), y1i = swrFloor(y1), y2i = swrCeiling(y2);
 		int xd = x2i - x1i;
 		int yd = y2i - y1i;
 		if (xd <= 0 || yd <= 0) return;
-		swrTransformPosIfNeeded(swr, &x1i, &y1i);
-		swrTransformSizeIfNeeded(swr, &xd, &yd);
 		
 		for (int y = 0; y <= yd; y++) {
-			swrDrawHLine(renderer, x1i, y1i + y, xd, color, alpha, false);
+			swrDrawHLineInt(renderer, x1i, y1i + y, xd, color, alpha);
 		}
 	}
 }
@@ -780,17 +848,17 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
 	
-	swrDrawLine(renderer, (int)x1, (int)y1, (int)x2, (int)y2, (int)width, color, alpha, true);
+	swrDrawLine(renderer, x1, y1, x2, y2, width, color, alpha);
 }
 
 static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									float x3, float y3, bool outline)
 {
-	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
+	(void)outline;
 	
-	swrDrawLine(renderer, (int) x1, (int) y1, (int) x2, (int) y2, 1, renderer->drawColor, renderer->drawAlpha, true);
-	swrDrawLine(renderer, (int) x1, (int) y1, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
-	swrDrawLine(renderer, (int) x2, (int) y2, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
+	swrDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, renderer->drawAlpha);
+	swrDrawLine(renderer, x1, y1, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
+	swrDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
 }
 
 static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -808,7 +876,8 @@ typedef struct
 	int fontTpagIndex;
 	int fontPageId;
 	Sprite* spriteFontSprite; // source sprite for sprite fonts (NULL for regular fonts)
-} SwrFontState;
+}
+SwrFontState;
 
 static bool swrResolveFontState(SWRenderer* swr, DataWin* dw, Font* font, SwrFontState* state)
 {
@@ -838,8 +907,8 @@ static bool swrResolveFontState(SWRenderer* swr, DataWin* dw, Font* font, SwrFon
 }
 
 static bool swrResolveGlyph(
-	SWRenderer* swr, DataWin* dw, SwrFontState* state, FontGlyph* glyph, int cursorX, int cursorY,
-	int* tpagIndex, int* pageId, int* sx, int* sy, int* sw, int* sh, int* dx, int* dy
+	SWRenderer* swr, DataWin* dw, SwrFontState* state, FontGlyph* glyph, float cursorX, float cursorY,
+	int* tpagIndex, int* pageId, int* sx, int* sy, int* sw, int* sh, float* dx, float* dy
 )
 {
 	Font* font = state->font;
@@ -909,6 +978,9 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	float valignOffset = 0;
 	if (renderer->drawValign == 1) valignOffset = -totalHeight / 2.0f;
 	else if (renderer->drawValign == 2) valignOffset = -totalHeight;
+	
+	xscale *= font->scaleX;
+	yscale *= font->scaleY;
 
 	// Iterate through lines. HTML5 subtracts ascenderOffset from the per-line y offset
 	// (see yyFont.GR_Text_Draw), shifting glyphs up so the baseline aligns with the drawn y.
@@ -951,14 +1023,20 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 				bool drewSuccessfully = false;
 				if (glyph->sourceWidth != 0 && glyph->sourceHeight != 0) {
 					int fontTpagIndex = 0, pageId = 0;
-					int sx, sy, sw, sh, dx, dy, dw, dh;
-					if (swrResolveGlyph(swr, dwin, &fontState, glyph, (int) cursorX, (int) cursorY,
+					int sx, sy, sw, sh, dw, dh;
+					float dx, dy;
+					if (swrResolveGlyph(swr, dwin, &fontState, glyph, cursorX, cursorY,
 							&fontTpagIndex, &pageId, &sx, &sy, &sw, &sh, &dx, &dy))
 					{
-						dx = (int)(xscale * dx) + (int) x;
-						dy = (int)(xscale * dy) + (int) y;
-						dw = (int)(xscale * glyph->sourceWidth);
-						dh = (int)(yscale * glyph->sourceHeight);
+						dx *= xscale; dx += x;
+						dy *= xscale; dy += y;
+						dw = swrCeiling(xscale * glyph->sourceWidth);
+						dh = swrCeiling(yscale * glyph->sourceHeight);
+						
+						// TODO: at 640x480, for some reason, without this fixup the
+						// letters in the "Name the fallen human." screen don't shake
+						dx = round(dx * 2) / 2;
+						dy = round(dy * 2) / 2;
 						
 						SWTexture* texture = swr->textures[pageId];
 						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
