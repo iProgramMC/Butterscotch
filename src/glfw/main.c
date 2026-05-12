@@ -33,9 +33,15 @@
 #include "input_recording.h"
 #include "debug_overlay.h"
 #include "gl_renderer.h"
+#ifdef ENABLE_LEGACY_GL
 #include "gl_legacy_renderer.h"
+#endif
 #include "overlay_file_system.h"
+#if defined(USE_OPENAL)
+#include "al_audio_system.h"
+#elif defined(USE_MINIAUDIO)
 #include "ma_audio_system.h"
+#endif
 #include "noop_audio_system.h"
 #include "stb_ds.h"
 #include "stb_image_write.h"
@@ -256,10 +262,14 @@ static void parseCommandLineArgs(CommandLineArgs* args, int argc, char* argv[]) 
     args->traceBytecodeAfterFrame = 0;
     args->speedMultiplier = 1.0;
     args->fastForwardSpeed = 0.0;
-#ifdef USE_GLFW2
+#ifdef ENABLE_MODERN_GL
+#if defined(USE_GLFW2) && defined(ENABLE_LEGACY_GL)
     args->renderer = "legacy-gl";
 #else
     args->renderer = "gl";
+#endif
+#else
+    args->renderer = "legacy-gl";
 #endif
     args->osType = OS_WINDOWS;
     args->profilerFramesBetween = 0;
@@ -950,6 +960,20 @@ int main(int argc, char* argv[]) {
 
     bool modernGL = strcmp(args.renderer, "legacy-gl") != 0;
 
+#ifndef ENABLE_LEGACY_GL
+    if (!modernGL) {
+        fprintf(stderr, "The legacy gl renderer is unavailable!\n");
+        return 0;
+    }
+#endif
+
+#ifndef ENABLE_MODERN_GL
+    if (modernGL) {
+        fprintf(stderr, "The modern gl renderer is unavailable!\n");
+        return 0;
+    }
+#endif
+
     if (!modernGL && hmlen(args.screenshotSurfacesFrames)) {
         fprintf(stderr, "You can't use --screenshot-surfaces with --renderer legacy-gl!\n");
         return 0;
@@ -1051,18 +1075,29 @@ int main(int argc, char* argv[]) {
     }
     renderer = GLRenderer_create();
 #else
-    if(strcmp(args.renderer, "legacy-gl") == 0)
+    if(strcmp(args.renderer, "legacy-gl") == 0) {
+#ifdef ENABLE_LEGACY_GL
         renderer = GLLegacyRenderer_create();
-    else
+#endif
+    } else {
+#ifdef ENABLE_MODERN_GL
         renderer = GLRenderer_create();
+#endif
+    }
 #endif
 
     // Initialize the audio system
     AudioSystem* audioSystem = nullptr;
-    if (!args.headless) {
-        audioSystem = (AudioSystem*) MaAudioSystem_create();
-    } else {
+    if (args.headless) {
         audioSystem = (AudioSystem*) NoopAudioSystem_create();
+    } else {
+#if defined(USE_OPENAL)
+        audioSystem = (AudioSystem*) AlAudioSystem_create();
+#elif defined(USE_MINIAUDIO)
+        audioSystem = (AudioSystem*) MaAudioSystem_create();
+#else
+        audioSystem = (AudioSystem*) NoopAudioSystem_create();
+#endif
     }
 
     // Initialize the runner
@@ -1135,13 +1170,15 @@ int main(int argc, char* argv[]) {
     bool debugPaused = false;
     bool debugShowCollisionMasks = false;
     double lastFrameTime = glfwGetTime();
-    while (
+    while (true) {
 #ifdef USE_GLFW2
-            glfwGetWindowParam(GLFW_OPENED)
+        bool shouldWindowClose = !glfwGetWindowParam(GLFW_OPENED);
 #else
-            !glfwWindowShouldClose(window)
+        bool shouldWindowClose = glfwWindowShouldClose(window);
 #endif
-            && !runner->shouldExit) {
+        if (runner->shouldExit || shouldWindowClose)
+            break;
+
         // Clear last frame's pressed/released state, then poll new input events
         RunnerKeyboard_beginFrame(runner->keyboard);
         RunnerGamepad_beginFrame(runner->gamepads);
