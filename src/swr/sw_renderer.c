@@ -287,7 +287,7 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	for (int i = 0; i < dh; i++)
 	{
 		uint32_t *line = &swr->fb[(dy + i) * swr->fbPitch + dx];
-		alphaBlend(&line[i], color, alpha);
+		alphaBlend(&line[0], color, alpha);
 	}
 }
 
@@ -590,6 +590,7 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
 	
+	//UNIMP();
 	swrDrawLine(renderer, (int)x1, (int)y1, (int)x2, (int)y2, (int)width, color, alpha, true);
 }
 
@@ -597,7 +598,7 @@ static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, floa
 									float x3, float y3, bool outline)
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
-	UNIMP2();
+	UNIMP();
 	
 	swrDrawLine(renderer, (int) x1, (int) y1, (int) x2, (int) y2, 1, renderer->drawColor, renderer->drawAlpha, true);
 	swrDrawLine(renderer, (int) x1, (int) y1, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
