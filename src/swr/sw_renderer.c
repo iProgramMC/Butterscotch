@@ -261,7 +261,7 @@ static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t co
 	
 	if (dy < 0) return;
 	if (dy >= swr->height) return;
-	if (dx < 0) dx = 0;
+	if (dx < 0) { dw += dx; dx = 0; }
 	if (dx + dw >= swr->width) dw = swr->width - dx;
 	if (dw <= 0) return;
 	
@@ -280,7 +280,7 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	
 	if (dx < 0) return;
 	if (dx >= swr->width) return;
-	if (dy < 0) dy = 0;
+	if (dy < 0) { dh += dy; dy = 0; }
 	if (dy + dh >= swr->height) dh = swr->height - dy;
 	if (dh <= 0) return;
 	
@@ -378,7 +378,8 @@ static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int 
 static void swrDrawSprite(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, float alpha
+	uint32_t tintColor, float alpha,
+	bool flipX, bool flipY
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
@@ -431,21 +432,25 @@ static void swrDrawSprite(
 	
 	//okay, now we can finally get on with rendering
 	
+	int ixs, oxs, iys, oys;
+	if (flipX) ixs = dw - 1, oxs = -1; else ixs = 0, oxs = 1;
+	if (flipY) iys = dh - 1, oys = -1; else iys = 0, oys = 1;
+	
 	if (sw == dw)
 	{
-		for (int y = 0; y < dh; y++)
+		for (int y = 0, ys = iys; y < dh; y++, iys += oys)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
 			dstline = &swr->fb[(dy + y) * swr->fbPitch + dx];
 			if (dh == sh)
-				srcline = &texture->buffer[(sy + y) * texture->width + sx];
+				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
 				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
 			
-			for (int x = 0; x < dw; x++)
+			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
-				uint32_t pixel = srcline[x];
+				uint32_t pixel = srcline[xs];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
@@ -453,19 +458,19 @@ static void swrDrawSprite(
 	}
 	else
 	{
-		for (int y = 0; y < dh; y++)
+		for (int y = 0, ys = iys; y < dh; y++, iys += oys)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
 			dstline = &swr->fb[(dy + y) * swr->fbPitch + dx];
 			if (dh == sh)
-				srcline = &texture->buffer[(sy + y) * texture->width + sx];
+				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
 				srcline = &texture->buffer[(sy + (int)((long)y*osh/odh)) * texture->width + sx];
 			
-			for (int x = 0; x < dw; x++)
+			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
-				uint32_t pixel = srcline[(int)((long)x*osw/odw)];
+				uint32_t pixel = srcline[(int)((long)xs*osw/odw)];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
@@ -487,19 +492,29 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
     if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
     if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 	
+	bool flipX = false, flipY = false;
+	if (xscale < 0) flipX = true, xscale = -xscale;
+	if (yscale < 0) flipY = true, yscale = -yscale;
+	
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
 	int sw = tpag->sourceWidth;
 	int sh = tpag->sourceHeight;
 	
-	int dx = (int)(tpag->targetX - originX + x);
-	int dy = (int)(tpag->targetY - originY + y);
+	int dx = (int)(tpag->targetX - originX);
+	int dy = (int)(tpag->targetY - originY);
 	int dw = (int)(xscale * sw);
 	int dh = (int)(yscale * sh);
+	dx = (int)(dx * xscale);
+	dy = (int)(dy * yscale);
+	dx += (int) x;
+	dy += (int) y;
+	if (flipX) dx -= dw;
+	if (flipY) dy -= dh;
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
+	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 }
 
 static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
@@ -514,6 +529,10 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	DataWin* dwin = renderer->dataWin;
 
 	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
+	
+	bool flipX = false, flipY = false;
+	if (xscale < 0) flipX = true, xscale = -xscale;
+	if (yscale < 0) flipY = true, yscale = -yscale;
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
     int16_t pageId = tpag->texturePageId;
@@ -529,10 +548,12 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	int dy = (int)y;
 	int dw = (int)(xscale * sw);
 	int dh = (int)(yscale * sh);
+	if (flipX) dx -= dw;
+	if (flipY) dy -= dh;
 	
 	SWTexture* texture = swr->textures[pageId];
 	
-	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
+	swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 }
 
 static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
@@ -590,7 +611,6 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
 	
-	//UNIMP();
 	swrDrawLine(renderer, (int)x1, (int)y1, (int)x2, (int)y2, (int)width, color, alpha, true);
 }
 
@@ -598,7 +618,6 @@ static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, floa
 									float x3, float y3, bool outline)
 {
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2; (void)x3; (void)y3; (void)outline;
-	UNIMP();
 	
 	swrDrawLine(renderer, (int) x1, (int) y1, (int) x2, (int) y2, 1, renderer->drawColor, renderer->drawAlpha, true);
 	swrDrawLine(renderer, (int) x1, (int) y1, (int) x3, (int) y3, 1, renderer->drawColor, renderer->drawAlpha, true);
@@ -709,6 +728,11 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	
     SwrFontState fontState;
     if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
+	
+	// TODO: do we need to mirror the way the text scrolls too?!
+	bool flipX = false, flipY = false;
+	if (xscale < 0) flipX = true, xscale = -xscale;
+	if (yscale < 0) flipY = true, yscale = -yscale;
 
 	int textLen = (int) strlen(text);
 	int lineCount = TextUtils_countLines(text, textLen);
@@ -771,7 +795,7 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						dh = (int)(yscale * glyph->sourceHeight);
 						
 						SWTexture* texture = swr->textures[pageId];
-						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
+						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
 						
                         drewSuccessfully = true;
 					}
@@ -918,6 +942,10 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
     float tileW = (float) tpag->boundingWidth * axScale;
     float tileH = (float) tpag->boundingHeight * ayScale;
     if (0 >= tileW || 0 >= tileH) return;
+	
+	bool flipX = false, flipY = false;
+	if (xscale < 0) flipX = true, xscale = -xscale;
+	if (yscale < 0) flipY = true, yscale = -yscale;
 
     float startX, endX, startY, endY;
     if (tileX) {
@@ -963,7 +991,9 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
             int vx1 = cx + sx1;
 			int dw = vx1 - vx0;
 
-			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha);
+			if (flipX) dx -= dw;
+			if (flipY) dy -= dh;
+			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha, flipX, flipY);
 		}
 	}
 }
