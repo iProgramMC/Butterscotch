@@ -38,12 +38,62 @@ SWRenderer;
 
 void Runner_setNextFrame(uint32_t* framebuffer, int width, int height);
 
-static uint32_t convertColor(uint32_t p)
+typedef union
+{
+	struct { uint8_t b, g, r, a; } p;
+	uint32_t l;
+}
+Color;
+
+FORCE_INLINE uint32_t convertColor(uint32_t p)
 {
 	uint32_t np = p & 0xFF00FF00;
 	np |= (p & 0xFF) << 16;
 	np |= (p >> 16) & 0xFF;
 	return np;
+}
+
+FORCE_INLINE bool opaque(uint32_t color)
+{
+	return (color & 0xFF000000) != 0;
+}
+
+FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
+{
+	Color x, y;
+	
+	if ((tintColor & 0xFFFFFF) == 0xFFFFFF)
+		return color;
+	
+	x.l = color;
+	y.l = tintColor;
+	
+	x.p.b = (int)x.p.b * y.p.b / 255;
+	x.p.g = (int)x.p.g * y.p.g / 255;
+	x.p.r = (int)x.p.r * y.p.r / 255;
+	return x.l;
+}
+
+FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
+{
+	if (alphaf >= 0.98f)
+	{
+		*dcolor = scolor;
+		return;
+	}
+	
+	int alpha = (int)(alphaf * 256);
+	int inval = 256 - alpha;
+	
+	Color dc, sc;
+	dc.l = *dcolor;
+	sc.l = scolor;
+	
+	dc.p.r = (dc.p.r * inval + sc.p.r * alpha) / 256;
+	dc.p.g = (dc.p.g * inval + sc.p.g * alpha) / 256;
+	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) / 256;
+	
+	*dcolor = dc.l;
 }
 
 static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
@@ -187,7 +237,7 @@ static void swrTransformSizeIfNeeded(SWRenderer* swr, int* dx, int* dy)
 	if (dy) *dy = (int)((long) *dy * swr->height / swr->viewH);
 }
 
-static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t color, UNUSED float alpha, bool xform)
+static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t color, float alpha, bool xform)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	if (xform) {
@@ -203,10 +253,10 @@ static void swrDrawHLine(Renderer* renderer, int dx, int dy, int dw, uint32_t co
 	
 	uint32_t *line = &swr->fb[dy * swr->fbPitch + dx];
 	for (int i = 0; i < dw; i++)
-		line[i] = color;
+		alphaBlend(&line[i], color, alpha);
 }
 
-static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t color, UNUSED float alpha, bool xform)
+static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t color, float alpha, bool xform)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	if (xform) {
@@ -223,40 +273,14 @@ static void swrDrawVLine(Renderer* renderer, int dx, int dy, int dh, uint32_t co
 	for (int i = 0; i < dh; i++)
 	{
 		uint32_t *line = &swr->fb[(dy + i) * swr->fbPitch + dx];
-		line[i] = color;
+		alphaBlend(&line[i], color, alpha);
 	}
-}
-
-FORCE_INLINE bool opaque(uint32_t color)
-{
-	return (color & 0xFF000000) != 0;
-}
-
-FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
-{
-	union {
-		struct {
-			uint8_t b,g,r,a;
-		} p;
-		uint32_t l;
-	} x, y;
-	
-	if ((tintColor & 0xFFFFFF) == 0xFFFFFF)
-		return color;
-	
-	x.l = color;
-	y.l = tintColor;
-	
-	x.p.b = (int)x.p.b * y.p.b / 255;
-	x.p.g = (int)x.p.g * y.p.g / 255;
-	x.p.r = (int)x.p.r * y.p.r / 255;
-	return x.l;
 }
 
 static void swrDrawSprite(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, UNUSED float alpha
+	uint32_t tintColor, float alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
@@ -325,7 +349,7 @@ static void swrDrawSprite(
 			{
 				uint32_t pixel = srcline[x];
 				if (opaque(pixel))
-					dstline[x] = tint(tintColor, pixel);
+					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
 		}
 	}
@@ -345,7 +369,7 @@ static void swrDrawSprite(
 			{
 				uint32_t pixel = srcline[(int)((long)x*osw/odw)];
 				if (opaque(pixel))
-					dstline[x] = tint(tintColor, pixel);
+					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
 		}
 	}
