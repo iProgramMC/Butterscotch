@@ -425,8 +425,7 @@ static void swrDrawLine(Renderer* renderer, int x1, int y1, int x2, int y2, int 
 static void swrDrawSprite(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, float alpha,
-	bool flipX, bool flipY
+	uint32_t tintColor, float alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
@@ -435,6 +434,10 @@ static void swrDrawSprite(
 	swrTransformSizeIfNeeded(swr, &dw, &dh);
 	
 	tintColor = convertColor(tintColor);
+	
+	bool flipX = false, flipY = false;
+	if (dw < 0) { dx += dw; dw = -dw; flipX = true; }
+	if (dh < 0) { dy += dh; dh = -dh; flipY = true; }
 	
 	//basic out of bound checks
 	if (dw == 0 || dh == 0) return;
@@ -529,7 +532,6 @@ static void swrDrawSpriteRotated(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
 	uint32_t tintColor, float alpha,
-	bool flipX, bool flipY,
 	float angleDeg,
 	float pivotX,
 	float pivotY
@@ -542,6 +544,10 @@ static void swrDrawSpriteRotated(
 	swrTransformSizeIfNeeded(swr, &dw, &dh);
 	
 	tintColor = convertColor(tintColor);
+	
+	bool flipX = false, flipY = false;
+	if (dw < 0) { dw = -dw; dx -= dw; pivotX -= dw; flipX = true; }
+	if (dh < 0) { dh = -dh; dy -= dh; pivotY -= dh; flipY = true; }
 	
 	float cosA = cosf(angleRad);
 	float sinA = sinf(angleRad);
@@ -650,11 +656,7 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	int16_t pageId = tpag->texturePageId;
 	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
 	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
-	
-	bool flipX = false, flipY = false;
-	if (xscale < 0) flipX = true, xscale = -xscale;
-	if (yscale < 0) flipY = true, yscale = -yscale;
-	
+
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
 	int sw = tpag->sourceWidth;
@@ -668,20 +670,18 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	dy = (int)(dy * yscale);
 	dx += (int) x;
 	dy += (int) y;
-	if (flipX) dx -= dw;
-	if (flipY) dy -= dh;
-	
+
 	SWTexture* texture = swr->textures[pageId];
 	
 	if (UNLIKELY(!swrMustRotate(angleDeg)))
 	{
 		float pivotX = x - dx;
 		float pivotY = y - dy;
-		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, angleDeg, pivotX, pivotY);
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, angleDeg, pivotX, pivotY);
 	}
 	else
 	{
-		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 	}
 }
 
@@ -720,11 +720,11 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	
 	if (UNLIKELY(!swrMustRotate(angleDeg)))
 	{
-		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY, angleDeg, pivotX * dw, pivotY * dh);
+		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, angleDeg, pivotX * dw, pivotY * dh);
 	}
 	else
 	{
-		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+		swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 	}
 }
 
@@ -899,10 +899,7 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 	if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
 	
 	// TODO: do we need to mirror the way the text scrolls too?!
-	bool flipX = false, flipY = false;
-	if (xscale < 0) flipX = true, xscale = -xscale;
-	if (yscale < 0) flipY = true, yscale = -yscale;
-
+	
 	int textLen = (int) strlen(text);
 	int lineCount = TextUtils_countLines(text, textLen);
 	float lineStride = TextUtils_lineStride(font);
@@ -964,7 +961,7 @@ static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, flo
 						dh = (int)(yscale * glyph->sourceHeight);
 						
 						SWTexture* texture = swr->textures[pageId];
-						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, flipX, flipY);
+						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha);
 						
 						drewSuccessfully = true;
 					}
@@ -1111,10 +1108,6 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 	float tileW = (float) tpag->boundingWidth * axScale;
 	float tileH = (float) tpag->boundingHeight * ayScale;
 	if (0 >= tileW || 0 >= tileH) return;
-	
-	bool flipX = false, flipY = false;
-	if (xscale < 0) flipX = true, xscale = -xscale;
-	if (yscale < 0) flipY = true, yscale = -yscale;
 
 	float startX, endX, startY, endY;
 	if (tileX) {
@@ -1160,9 +1153,7 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 			int vx1 = cx + sx1;
 			int dw = vx1 - vx0;
 
-			if (flipX) dx -= dw;
-			if (flipY) dy -= dh;
-			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha, flipX, flipY);
+			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha);
 		}
 	}
 }
