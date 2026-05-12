@@ -91,6 +91,11 @@ FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
 
 FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
 {
+	// it's so insignificant here nobody will notice if we just don't...
+	if (alphaf <= 0.05f)
+		return;
+	
+	// it's so significant here we might as well fill in the whole color
 	if (alphaf >= 0.98f)
 	{
 		*dcolor = scolor;
