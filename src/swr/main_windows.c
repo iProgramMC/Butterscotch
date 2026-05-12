@@ -59,6 +59,24 @@ static double swrGetTime()
 	return GetTickCount() / 1000.0;
 }
 
+static void keyPressed(uint8_t key)
+{
+	// GML uses key constants which match Win32's
+	if (!keysPressed[key])
+		RunnerKeyboard_onKeyDown(pRunner->keyboard, key);
+
+	keysPressed[key] = true;
+}
+
+static void keyReleased(uint8_t key)
+{
+	// GML uses key constants which match Win32's
+	if (keysPressed[key])
+		RunnerKeyboard_onKeyUp(pRunner->keyboard, key);
+
+	keysPressed[key] = false;
+}
+
 static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
@@ -70,12 +88,12 @@ static LRESULT WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		
 		case WM_KEYDOWN:
 			if (wParam < 256)
-				keysPressed[wParam] = true;
+				keyPressed((uint8_t) wParam);
 			break;
 		
 		case WM_KEYUP:
 			if (wParam < 256)
-				keysPressed[wParam] = false;
+				keyReleased((uint8_t) wParam);
 			break;
 		
 		case WM_ACTIVATE:

@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "sw_renderer.h"
+#include "text_utils.h"
 #include "image/image_decoder.h"
 
 #define UNUSED __attribute__ ((unused))
@@ -60,7 +61,7 @@ static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 
 // Lazily decodes and uploads a TXTR page on first access.
 // Returns true if the texture is ready, false if it failed to decode.
-static bool ensureTextureLoaded(SWRenderer* swr, uint32_t pageId)
+static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 {
     if (swr->textures[pageId])
 		return true;
@@ -321,7 +322,7 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
     int16_t pageId = tpag->texturePageId;
     if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-    if (!ensureTextureLoaded(swr, (uint32_t) pageId)) return;
+    if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 	
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
@@ -423,15 +424,196 @@ static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, flo
 	fprintf(stderr, "%s\n", __func__);
 }
 
+typedef struct
+{
+    Font* font;
+    TexturePageItem* fontTpag; // single TPAG for regular fonts (NULL for sprite fonts)
+	int fontTpagIndex;
+	int fontPageId;
+    Sprite* spriteFontSprite; // source sprite for sprite fonts (NULL for regular fonts)
+} SwrFontState;
+
+static bool swrResolveFontState(SWRenderer* swr, DataWin* dw, Font* font, SwrFontState* state)
+{
+	state->font = font;
+	state->fontTpag = NULL;
+	state->fontTpagIndex = 0;
+	state->spriteFontSprite = NULL;
+	
+	if (font->isSpriteFont)
+	{
+		state->spriteFontSprite = &dw->sprt.sprites[font->spriteIndex];
+	}
+	else
+	{
+		state->fontTpagIndex = font->tpagIndex;
+		if (state->fontTpagIndex < 0) return false;
+		
+		state->fontTpag = &dw->tpag.items[state->fontTpagIndex];
+		int16_t pageId = state->fontTpag->texturePageId;
+		if (0 > pageId || (uint32_t) pageId >= swr->textureCount) return false;
+		if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return false;
+		
+		state->fontPageId = pageId;
+	}
+	
+	return true;
+}
+
+static bool swrResolveGlyph(
+	SWRenderer* swr, DataWin* dw, SwrFontState* state, FontGlyph* glyph, int cursorX, int cursorY,
+	int* tpagIndex, int* pageId, int* sx, int* sy, int* sw, int* sh, int* dx, int* dy
+)
+{
+	Font* font = state->font;
+	if (font->isSpriteFont && state->spriteFontSprite != NULL)
+	{
+        Sprite* sprite = state->spriteFontSprite;
+        int32_t glyphIndex = (int32_t) (glyph - font->glyphs);
+        if (0 > glyphIndex ||  glyphIndex >= (int32_t) sprite->textureCount) return false;
+
+        int32_t tpagIdx = sprite->tpagIndices[glyphIndex];
+        if (0 > tpagIdx) return false;
+
+        TexturePageItem* glyphTpag = &dw->tpag.items[tpagIdx];
+        int16_t pid = glyphTpag->texturePageId;
+        if (0 > pid || (uint32_t) pid >= swr->textureCount) return false;
+        if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pid)) return false;
+
+		*tpagIndex = tpagIdx;
+		*pageId = glyphTpag->texturePageId;
+		
+		*sx = glyphTpag->sourceX;
+		*sy = glyphTpag->sourceY;
+		*sw = glyphTpag->sourceWidth;
+		*sh = glyphTpag->sourceHeight;
+		
+		*dx = cursorX + glyph->offset;
+		*dy = cursorY + glyphTpag->targetY - sprite->originY;
+	}
+	else
+	{
+		*tpagIndex = state->fontTpagIndex;
+		*pageId = state->fontPageId;
+		
+		*sx = state->fontTpag->sourceX + glyph->sourceX;
+		*sy = state->fontTpag->sourceY + glyph->sourceY;
+		*sw = glyph->sourceWidth;
+		*sh = glyph->sourceHeight;
+		
+		*dx = cursorX + glyph->offset;
+		*dy = cursorY;
+	}
+	
+	return true;
+}
+
+static void swrDrawText(SWRenderer* swr, const char* text, float x, float y, float xscale, float yscale, UNUSED float angleDeg, int32_t color, UNUSED float alpha)
+{
+	Renderer* renderer = &swr->base;
+	DataWin* dwin = renderer->dataWin;
+
+    int32_t fontIndex = renderer->drawFont;
+    if (0 > fontIndex || dwin->font.count <= (uint32_t) fontIndex) return;
+
+    Font* font = &dwin->font.fonts[fontIndex];
+	
+    SwrFontState fontState;
+    if (!swrResolveFontState(swr, dwin, font, &fontState)) return;
+
+	int textLen = (int) strlen(text);
+	int lineCount = TextUtils_countLines(text, textLen);
+	float lineStride = TextUtils_lineStride(font);
+
+    // Vertical alignment offset
+    float totalHeight = (float) lineCount * lineStride;
+    float valignOffset = 0;
+    if (renderer->drawValign == 1) valignOffset = -totalHeight / 2.0f;
+    else if (renderer->drawValign == 2) valignOffset = -totalHeight;
+
+    // Iterate through lines. HTML5 subtracts ascenderOffset from the per-line y offset
+    // (see yyFont.GR_Text_Draw), shifting glyphs up so the baseline aligns with the drawn y.
+    float cursorY = valignOffset - (float) font->ascenderOffset;
+    int32_t lineStart = 0;
+
+    for (int32_t lineIdx = 0; lineCount > lineIdx; lineIdx++) {
+        // Find end of current line
+        int32_t lineEnd = lineStart;
+        while (textLen > lineEnd && !TextUtils_isNewlineChar(text[lineEnd])) {
+            lineEnd++;
+        }
+        int32_t lineLen = lineEnd - lineStart;
+
+        // Horizontal alignment offset for this line
+        float lineWidth = TextUtils_measureLineWidth(font, text + lineStart, lineLen);
+        float halignOffset = 0;
+        if (renderer->drawHalign == 1) halignOffset = -lineWidth / 2.0f;
+        else if (renderer->drawHalign == 2) halignOffset = -lineWidth;
+
+        float cursorX = halignOffset;
+
+        // Render each glyph in the line - decode each codepoint once and carry it forward as next iteration's ch (also used for kerning)
+        int32_t pos = 0;
+        uint16_t ch = 0;
+        bool hasCh = false;
+        if (lineLen > pos) {
+            ch = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
+            hasCh = true;
+        }
+
+        while (hasCh) {
+            FontGlyph* glyph = TextUtils_findGlyph(font, ch);
+
+            uint16_t nextCh = 0;
+            bool hasNext = lineLen > pos;
+            if (hasNext) nextCh = TextUtils_decodeUtf8(text + lineStart, lineLen, &pos);
+
+            if (glyph != nullptr) {
+                bool drewSuccessfully = false;
+                if (glyph->sourceWidth != 0 && glyph->sourceHeight != 0) {
+					int fontTpagIndex = 0, pageId = 0;
+					int sx, sy, sw, sh, dx, dy, dw, dh;
+					if (swrResolveGlyph(swr, dwin, &fontState, glyph, (int) cursorX, (int) cursorY,
+							&fontTpagIndex, &pageId, &sx, &sy, &sw, &sh, &dx, &dy))
+					{
+						dx += (int) x;
+						dy += (int) y;
+						dw = glyph->sourceWidth;
+						dh = glyph->sourceHeight;
+						
+						SWTexture* texture = swr->textures[pageId];
+						fprintf(stderr, "sx=%d sy=%d sw=%d sh=%d\n", sx,sy,sw,sh);
+						swrDrawSprite(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, alpha);
+						
+                        drewSuccessfully = true;
+					}
+                }
+
+                cursorX += glyph->shift;
+                if (drewSuccessfully && hasNext) {
+                    cursorX += TextUtils_getKerningOffset(glyph, nextCh);
+                }
+            }
+
+            ch = nextCh;
+            hasCh = hasNext;
+        }
+
+        cursorY += lineStride;
+        // Skip past the newline, treating \r\n and \n\r as single breaks
+        if (textLen > lineEnd) {
+            lineStart = TextUtils_skipNewline(text, lineEnd, textLen);
+        } else {
+            lineStart = lineEnd;
+        }
+    }
+}
+
 static void SWRenderer_drawText(Renderer* renderer, const char* text, float x, float y,
 								float xscale, float yscale, float angleDeg)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
-	
-	
-	(void)renderer; (void)text; (void)x; (void)y;
-	(void)xscale; (void)yscale; (void)angleDeg;
-	fprintf(stderr, "%s\n", __func__);
+	swrDrawText(swr, text, x, y, xscale, yscale, angleDeg, renderer->drawColor, renderer->drawAlpha);
 }
 
 static void SWRenderer_drawTextColor(Renderer* renderer, const char* text, float x, float y,
