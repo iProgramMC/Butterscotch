@@ -5,3 +5,6 @@ build_ps3/
 .cache
 CMakeUserPresets.json
 .devcontainer/
+
+build-win/
+build-win-swr/

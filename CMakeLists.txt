@@ -60,7 +60,44 @@ target_include_directories(butterscotch PUBLIC vendor/stb/ds)
 target_sources(butterscotch PRIVATE vendor/md5/md5.c)
 target_include_directories(butterscotch PUBLIC vendor/md5)
 
-if(PLATFORM STREQUAL "glfw")
+if(PLATFORM STREQUAL "swr")
+	# Software Rendering
+	
+    # stb_image
+    target_include_directories(butterscotch PUBLIC vendor/stb/image)
+
+	#### Copied from glfw-- maybe don't belong in the per-platform definitions? ####
+	
+    # Butterscotch VM/interpreter profiler
+    option(ENABLE_VM_GML_PROFILER "Enable Butterscotch VM/interpreter profiler" ON)
+    if(ENABLE_VM_GML_PROFILER)
+        add_compile_definitions(ENABLE_VM_GML_PROFILER)
+    endif()
+
+    # Butterscotch VM/interpreter tracing
+    option(ENABLE_VM_TRACING "Enable Butterscotch VM/interpreter tracing checks" ON)
+    if(ENABLE_VM_TRACING)
+        add_compile_definitions(ENABLE_VM_TRACING)
+    endif()
+
+    # Butterscotch VM opcode count profiler
+    option(ENABLE_VM_OPCODE_PROFILER "Enable Butterscotch VM opcode count profiler" ON)
+    if(ENABLE_VM_OPCODE_PROFILER)
+        add_compile_definitions(ENABLE_VM_OPCODE_PROFILER)
+    endif()
+
+    # Spatial grid logs
+    option(ENABLE_SPATIAL_GRID_LOGS "Enable Spatial Grid logs" OFF)
+    if(ENABLE_SPATIAL_GRID_LOGS)
+        add_compile_definitions(ENABLE_SPATIAL_GRID_LOGS)
+    endif()
+
+    # VM unknown/stubbed function logs
+    option(ENABLE_VM_STUB_LOGS "Enable VM unknown/stubbed function logs" ON)
+    if(ENABLE_VM_STUB_LOGS)
+        add_compile_definitions(ENABLE_VM_STUB_LOGS)
+    endif()
+elseif(PLATFORM STREQUAL "glfw")
     if(ENABLE_GLES)
         file(GLOB GL_SOURCES src/gl/*.c src/image/*.c)
     else()
