@@ -3,7 +3,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+//I know bz2 is easy to add, but I don't care about running Deltarune right now
+#ifndef DISABLE_BZ2
 #include <bzlib.h>
+#endif
 
 #include "stb_image.h"
 
@@ -112,6 +116,8 @@ static uint8_t* decodeQoi(const uint8_t* data, size_t dataSize, int* outW, int* 
     return raw;
 }
 
+#ifndef DISABLE_BZ2
+
 // Decodes BZip2-compressed custom QOI. The blob layout is:
 //   bytes 0..3 = "2zoq" magic
 //   bytes 4..5 = width (LE uint16)
@@ -144,6 +150,8 @@ static uint8_t* decodeBz2Qoi(const uint8_t* blob, size_t blobSize, bool gm2022_5
     return result;
 }
 
+#endif
+
 uint8_t* ImageDecoder_decodeToRgba(const uint8_t* blob, size_t blobSize, bool gm2022_5, int* outW, int* outH) {
     if (4 > blobSize || !blob) return nullptr;
 
@@ -152,10 +160,12 @@ uint8_t* ImageDecoder_decodeToRgba(const uint8_t* blob, size_t blobSize, bool gm
         return decodeQoi(blob, blobSize, outW, outH);
     }
 
+#ifndef DISABLE_BZ2
     // BZip2 + GameMaker custom QOI ("2zoq")
     if (blob[0] == '2' && blob[1] == 'z' && blob[2] == 'o' && blob[3] == 'q') {
         return decodeBz2Qoi(blob, blobSize, gm2022_5, outW, outH);
     }
+#endif
 
     // PNG (or anything else stbi recognizes).
     int w, h, channels;

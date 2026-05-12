@@ -133,14 +133,14 @@ if(PLATFORM STREQUAL "swr")
 	# add image decoder
 	file(GLOB IMAGE_SOURCES src/image/*.c)
 	target_sources(butterscotch PRIVATE ${IMAGE_SOURCES})
-	target_link_libraries(butterscotch bz2)
-	
-	add_link_options(butterscotch PRIVATE -mwindows)
+	target_link_options(butterscotch PRIVATE -Wl,-subsystem,windows)
 
 	# add audio for fun
 	if(NOT AUDIO_BACKEND STREQUAL "none")
 		target_include_directories(butterscotch PUBLIC vendor/stb/vorbis)
 	endif()
+	
+	add_compile_definitions(DISABLE_BZ2)
 	
 	#### Copied from glfw-- maybe don't belong in the per-platform definitions? ####
 	

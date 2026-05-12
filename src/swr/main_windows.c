@@ -518,7 +518,7 @@ void updateGame()
 	}
 }
 
-int WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR pCmdLine, int nCmdShow)
 {
 	static WNDCLASS windowClass;
 	windowClass.lpfnWndProc = WindowProc;
