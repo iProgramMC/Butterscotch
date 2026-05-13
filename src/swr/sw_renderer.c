@@ -1,10 +1,10 @@
 #include <stdio.h>
 #include <limits.h>
+#include <float.h>
+#include <assert.h>
 #include "sw_renderer.h"
 #include "text_utils.h"
 #include "image/image_decoder.h"
-
-#define FLT_MAX 99999999999.0f
 
 #define LIKELY(cond)   __builtin_expect(!!(cond), 1)
 #define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
@@ -19,6 +19,8 @@
 #ifndef M_PI
 #define M_PI 3.1415926535897932384626
 #endif
+
+#define TEXTURE_LRU_LENGTH 16
 
 typedef struct
 {
@@ -39,6 +41,9 @@ typedef struct
 	uint16_t fbPitch;
 	
 	SWTexture** textures;
+	uint32_t* textureIndexLRU;
+	uint32_t textureIndexLRUHead;
+	uint32_t textureIndexLRUTail;
 	size_t textureCount;
 	
 	bool viewActive;
@@ -167,6 +172,41 @@ static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 	return txt;
 }
 
+static bool swrAddTextureIndexToLRU(SWRenderer* swr, int textureIndex)
+{
+	uint32_t newIndex = (swr->textureIndexLRUHead + 1) % TEXTURE_LRU_LENGTH;
+	if (newIndex == swr->textureIndexLRUTail) {
+		// about to collide with tail from the other side -- nope.
+		return false;
+	}
+	
+	swr->textureIndexLRU[swr->textureIndexLRUHead] = textureIndex;
+	swr->textureIndexLRUHead = newIndex;
+	return true;
+}
+
+static int swrTailTextureIndexLRU(SWRenderer* swr, bool remove)
+{
+	if (swr->textureIndexLRUHead == swr->textureIndexLRUTail)
+		return -1;
+	
+	uint32_t textureIndex = swr->textureIndexLRU[swr->textureIndexLRUTail];
+	
+	if (remove)
+		swr->textureIndexLRUTail = (swr->textureIndexLRUTail + 1) % TEXTURE_LRU_LENGTH;
+	
+	return textureIndex;
+}
+
+static void swrEvictTextureFromCache(SWRenderer* swr, int textureIndex)
+{
+	SWTexture* texture = swr->textures[textureIndex];
+	swr->textures[textureIndex] = NULL;
+	
+	free(texture->buffer);
+	free(texture);
+}
+
 // Lazily decodes and uploads a TXTR page on first access.
 // Returns true if the texture is ready, false if it failed to decode.
 static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
@@ -179,9 +219,30 @@ static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 
 	int w, h;
 	bool gm2022_5 = DataWin_isVersionAtLeast(dw, 2022, 5, 0, 0);
-	uint8_t* pixels = ImageDecoder_decodeToRgba(txtr->blobData, (size_t) txtr->blobSize, gm2022_5, &w, &h);
+	
+	uint8_t* pixels = NULL;
+	
+	do
+	{
+		pixels = ImageDecoder_decodeToRgba(txtr->blobData, (size_t) txtr->blobSize, gm2022_5, &w, &h);
+		if (pixels)
+			break;
+		
+		fprintf(stderr, "swr: Failed to decode TXTR page %u.  This is likely because we're out of memory, so evicting a texture.\n", pageId);
+		
+		int tail = swrTailTextureIndexLRU(swr, true);
+		if (tail == -1) {
+			fprintf(stderr, "swr: Looks like we can't fit this texture in memory at all. Bummer.\n");
+			break;
+		}
+		
+		swrEvictTextureFromCache(swr, tail);
+		fprintf(stderr, "swr: Evicted texture %d, trying again.\n", tail);
+	}
+	while (!pixels);
+	
 	if (pixels == nullptr) {
-		fprintf(stderr, "swr: Failed to decode TXTR page %u\n", pageId);
+		fprintf(stderr, "swr: Failed to decode TXTR page %u.\n", pageId);
 		return false;
 	}
 
@@ -189,6 +250,24 @@ static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 	free(pixels);
 	
 	fprintf(stderr, "SWR: Loaded TXTR page %u (%dx%d)\n", pageId, w, h);
+	
+	// add it to the LRU
+	do
+	{
+		bool added = swrAddTextureIndexToLRU(swr, pageId);
+		if (added)
+			break;
+		
+		int tail = swrTailTextureIndexLRU(swr, true);
+		if (tail == -1) {
+			fprintf(stderr, "swr: Come on now.\n");
+			assert(tail != -1);
+		}
+		
+		swrEvictTextureFromCache(swr, tail);
+	}
+	while (true);
+	
 	return true;
 }
 
@@ -205,6 +284,11 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	//allocate texture buffer
 	swr->textureCount = dataWin->txtr.count;
 	swr->textures = safeCalloc(swr->textureCount, sizeof(SWTexture*));
+	
+	//allocate texture LRU cache to allow for dynamic unloading of textures
+	swr->textureIndexLRU = safeCalloc(sizeof(uint32_t), TEXTURE_LRU_LENGTH);
+	swr->textureIndexLRUHead = 0;
+	swr->textureIndexLRUTail = 0;
 	
 	fprintf(stderr, "SWRenderer initialized.\n");
 }
