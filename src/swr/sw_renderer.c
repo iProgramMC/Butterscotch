@@ -114,9 +114,9 @@ FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
 	dc.l = *dcolor;
 	sc.l = scolor;
 	
-	dc.p.r = (dc.p.r * inval + sc.p.r * alpha) / 256;
-	dc.p.g = (dc.p.g * inval + sc.p.g * alpha) / 256;
-	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) / 256;
+	dc.p.r = (dc.p.r * inval + sc.p.r * alpha) >> 8;
+	dc.p.g = (dc.p.g * inval + sc.p.g * alpha) >> 8;
+	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) >> 8;
 	
 	*dcolor = dc.l;
 }
@@ -618,6 +618,10 @@ static void swrDrawSpriteInternal(
 	}
 	else
 	{
+		const int fp_prec = 16;
+		int64_t ystep = ((int64_t) osh << fp_prec) / odh;
+		int64_t xstep = ((int64_t) osw << fp_prec) / odw;
+		
 		for (int y = 0, ys = iys; y < dh; y++, ys += oys)
 		{
 			uint32_t* dstline;
@@ -626,11 +630,11 @@ static void swrDrawSpriteInternal(
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
-				srcline = &texture->buffer[(sy + (int)((long)ys*osh/odh)) * texture->width + sx];
+				srcline = &texture->buffer[(sy + (int)((ystep * ys) >> fp_prec)) * texture->width + sx];
 			
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
-				uint32_t pixel = srcline[(int)((long)xs*osw/odw)];
+				uint32_t pixel = srcline[(int)((xstep * xs) >> fp_prec)];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
@@ -734,6 +738,9 @@ static void swrDrawSpriteRotatedInternal(
 	int six = flipX ? -1 : 1;
 	int siy = flipY ? -1 : 1;
 	
+	float sw_dw = (float) sw / dw;
+	float sh_dh = (float) sh / dh;
+	
 	for (int cy = minYc; cy < maxYc; cy++)
 	{
 		uint32_t *dstline = &swr->fb[cy * swr->fbPitch];
@@ -753,8 +760,8 @@ static void swrDrawSpriteRotatedInternal(
 			
 			if (lx < 0 || ly < 0 || lx >= (float) dw || ly >= (float) dh) continue;
 			
-			lx = lx * sw / dw;
-			ly = ly * sh / dh;
+			lx = lx * sw_dw;
+			ly = ly * sh_dh;
 			
 			int tx = (int)(sox + lx * six);
 			int ty = (int)(soy + ly * siy);
