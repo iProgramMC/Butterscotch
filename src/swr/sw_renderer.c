@@ -678,8 +678,8 @@ static void swrDrawSpriteRotatedInternal(
 	tintColor = convertColor(tintColor);
 	
 	bool flipX = false, flipY = false;
-	if (dw < 0) { dw = -dw; dx -= dw; pivotX -= dw; flipX = true; }
-	if (dh < 0) { dh = -dh; dy -= dh; pivotY -= dh; flipY = true; }
+	if (dw < 0) { dw = -dw; dx -= dw; pivotX = dw - pivotX; flipX = true; }
+	if (dh < 0) { dh = -dh; dy -= dh; pivotY = dh - pivotY; flipY = true; }
 	
 	float cosA = cosf(angleRad);
 	float sinA = sinf(angleRad);
