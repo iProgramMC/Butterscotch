@@ -30,9 +30,10 @@ static const char* pSaveDataDir = "./data";
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
 static bool bTraceFrames = false;
+static bool bTraceFPS = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
-static int nBeginningRoom = 134;
+static int nBeginningRoom = -1;
 static int nProfilerFramesBetween = 0;
 static int nSetSeed = 0;
 static int nExitAtFrame = -1;
@@ -65,6 +66,28 @@ static bool keysReleasedNextFrame[256];
 static double swrGetTime()
 {
 	return GetTickCount() / 1000.0;
+}
+
+static uint64_t swrGetTimePrecise()
+{
+	LARGE_INTEGER li;
+	QueryPerformanceCounter(&li);
+	return li.QuadPart;
+}
+
+static uint64_t swrGetTimePreciseFrequency()
+{
+	static bool initted = false;
+	static uint64_t value = 0;
+	if (initted)
+		return value;
+	
+	LARGE_INTEGER li;
+	QueryPerformanceFrequency(&li);
+	value = li.QuadPart;
+	initted = true;
+	
+	return value;
 }
 
 static uint8_t winKeyToGMLKey(uint8_t wParam)
@@ -206,11 +229,15 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 	}
 }
 
-static void swrFlushFrameBuffer()
+static void swrFlushFrameBuffer(uint64_t stepTicks, uint64_t renderTicks)
 {
 	HDC hdc = GetDC(hWnd);
 	
+	uint64_t start = swrGetTimePrecise();
+	
 	swrDrawFrameBufferToDevice(hdc, nextFrameBuffer, nextFrameBufferWidth, nextFrameBufferHeight);
+	
+	uint64_t flushTicks = swrGetTimePrecise() - start;
 	
 	if (bShowFPS)
 	{
@@ -230,13 +257,31 @@ static void swrFlushFrameBuffer()
 		
 		fpsCount++;
 		
-		char buffer[64];
-		snprintf(buffer, sizeof buffer, "FPS: %d", fps);
+		uint64_t total = stepTicks + renderTicks + flushTicks;
+		
+		int stepPercentage = (int)(stepTicks * 10000 / total);
+		int renderPercentage = (int)(renderTicks * 10000 / total);
+		int flushPercentage = (int)(flushTicks * 10000 / total);
+		
+		char buffer[128];
+		snprintf(
+			buffer,
+			sizeof buffer, 
+			"FPS: %d  STEP: %d.%02d%%, RENDER: %d.%02d%%, FLUSH: %d.%02d%%",
+			fps,
+			stepPercentage / 100, stepPercentage % 100,
+			renderPercentage / 100, renderPercentage % 100,
+			flushPercentage / 100, flushPercentage % 100
+		);
+		
 		COLORREF oldColor = SetTextColor(hdc, RGB(255,255,255));
 		int oldBkMode = SetBkMode(hdc, TRANSPARENT);
 		TextOutA(hdc, 0, 0, buffer, (int) strlen(buffer));
 		SetTextColor(hdc, oldColor);
 		SetBkMode(hdc, oldBkMode);
+		
+		if (bTraceFPS)
+			printf("%s\n", buffer);
 	}
 
 	ReleaseDC(hWnd, hdc);
@@ -434,6 +479,10 @@ void updateGame()
 	}
 
 	double frameStartTime = 0;
+	
+	// PROFILING
+	uint64_t start;
+	uint64_t runner_step_ticks = 0, render_ticks = 0;
 
 	if (shouldStep) {
 		frameStartTime = swrGetTime();
@@ -442,7 +491,9 @@ void updateGame()
 		}
 
 		// Run one game step (Begin Step, Keyboard, Alarms, Step, End Step, room transitions)
+		start = swrGetTimePrecise();
 		Runner_step(runner);
+		runner_step_ticks = swrGetTimePrecise() - start;
 
 		if (nProfilerFramesBetween > 0 && runner->frameCount > 0 && runner->frameCount % nProfilerFramesBetween == 0) {
 			char* profilerReport = Profiler_createReport(vm->profiler, 20, nProfilerFramesBetween);
@@ -465,6 +516,7 @@ void updateGame()
 	fbWidth = WINDOW_WIDTH;
 	fbHeight = WINDOW_HEIGHT;
 	
+	start = swrGetTimePrecise();
 	SWRenderer_clearFrameBuffer(renderer, 0);
 	
 	int32_t gameW = (int32_t) gen8->defaultWindowWidth;
@@ -495,25 +547,8 @@ void updateGame()
 
 	renderer->vtable->endFrame(renderer);
 
-	// Capture screenshot if this frame matches a requested frame
-/*
-	bool shouldScreenshot = hmget(args.screenshotFrames, runner->frameCount);
+	render_ticks = swrGetTimePrecise() - start;
 
-	if (shouldScreenshot) {
-		GLuint readFbo = (strcmp(args.renderer, "legacy-gl") == 0) ? 0 : ((GLRenderer*) renderer)->fbo;
-		captureScreenshot(readFbo, args.screenshotPattern, runner->frameCount, gameW, gameH);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-	}
-
-	// Dump all surfaces if this frame matches a requested frame
-	bool shouldDumpSurfaces = hmget(args.screenshotSurfacesFrames, runner->frameCount);
-
-	if (shouldDumpSurfaces) {
-		GLRenderer* gl = (GLRenderer*) renderer;
-		dumpAllSurfaces(gl, args.screenshotSurfacesPattern, runner->frameCount);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-	}
-*/
 	if (nExitAtFrame >= 0 && runner->frameCount >= nExitAtFrame) {
 		printf("Exiting at frame %d (--exit-at-frame)\n", runner->frameCount);
 		DestroyWindow(hWnd);
@@ -533,7 +568,7 @@ void updateGame()
 
 	// Only swap when there isn't a room change to match the original runner.
 	if (runner->pendingRoom == -1) {
-		swrFlushFrameBuffer();
+		swrFlushFrameBuffer(runner_step_ticks, render_ticks);
 	}
 	
 	//DEBUG: enter a different room from the intro
