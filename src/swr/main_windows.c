@@ -12,6 +12,7 @@
 #include "overlay_file_system.h"
 #include "audio_system.h"
 #include "sw_renderer.h"
+#include "fb_convert.h"
 #ifdef USE_MINIAUDIO
 #include "audio/miniaudio/ma_audio_system.h"
 #else
@@ -26,7 +27,7 @@ static const char* pDataWinPath = "./data/data.win";
 static const char* pDataWinDir = "./data";
 static const char* pSaveDataDir = "./data";
 
-static bool bLazilyLoadRooms = true;
+static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
 static bool bTraceFrames = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
@@ -104,7 +105,7 @@ static LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 			break;
 		
 		case WM_ACTIVATE:
-			if (wParam == WA_INACTIVE && lParam == hWnd)
+			if (wParam == WA_INACTIVE && (HWND) lParam == hWnd)
 			{
 				memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
 				memset(keysReleasedNextFrame, 1, sizeof keysReleasedNextFrame);
@@ -126,32 +127,90 @@ void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
 	nextFrameBufferHeight = height;
 }
 
-static void swrSwapBuffers()
+static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
 {
-	int width = nextFrameBufferWidth;
-	int height = nextFrameBufferHeight;
-	uint32_t* pixels = nextFrameBuffer;
+	static uint16_t* fallbackFramebuffer16 = NULL;
+	static uint8_t* fallbackFramebuffer24 = NULL;
+	static uint8_t* fallbackFramebuffer8 = NULL;
 	
-	HDC hdc = GetDC(hWnd);
-	
+	static int framebufferPreference = 32;
+
+	int rc = 0;
+
 	BITMAPINFO bmi = {0};
 	bmi.bmiHeader.biSize        = sizeof(BITMAPINFOHEADER);
 	bmi.bmiHeader.biWidth       = width;
 	bmi.bmiHeader.biHeight      = -height;
 	bmi.bmiHeader.biPlanes      = 1;
-	bmi.bmiHeader.biBitCount    = 32;
 	bmi.bmiHeader.biCompression = BI_RGB;
 
-	SetDIBitsToDevice(
-		hdc,
-		0, 0, // dest X/Y
-		width, height,
-		0, 0,
-		0, height,
-		nextFrameBuffer,
-		&bmi,
-		DIB_RGB_COLORS
-	);
+	if (framebufferPreference == 32)
+	{
+		bmi.bmiHeader.biBitCount = 32;
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, framebuffer, &bmi, DIB_RGB_COLORS);
+		
+		if (rc != 0)
+			return;
+		
+		MessageBoxA(hWnd, "Couldn't draw a 32-bit frame buffer, trying 24.", "Butterscotch", MB_OK);
+		framebufferPreference = 24;
+	}
+	
+	if (framebufferPreference == 24)
+	{
+		// try a 24-bit framebuffer
+		bmi.bmiHeader.biBitCount = 24;
+		
+		fallbackFramebuffer24 = swrConvert32to24(fallbackFramebuffer24, framebuffer, width, height);
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer24, &bmi, DIB_RGB_COLORS);
+		
+		if (rc != 0)
+			return;
+		
+		MessageBoxA(hWnd, "Couldn't draw a 24-bit frame buffer, trying 16.", "Butterscotch", MB_OK);
+		free(fallbackFramebuffer24);
+		fallbackFramebuffer24 = NULL;
+		framebufferPreference = 16;
+	}
+	
+	if (framebufferPreference == 16)
+	{
+		// try 16-bit framebuffer
+		bmi.bmiHeader.biBitCount = 16;
+		
+		fallbackFramebuffer16 = swrConvert32to16(fallbackFramebuffer16, framebuffer, width, height);
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer16, &bmi, DIB_RGB_COLORS);
+		
+		if (rc != 0)
+			return;
+		
+		MessageBoxA(hWnd, "Couldn't draw a 16-bit frame buffer, trying 8.", "Butterscotch", MB_OK);
+		free(fallbackFramebuffer16);
+		fallbackFramebuffer16 = NULL;
+		framebufferPreference = 8;
+	}
+	
+	// try 8-bit framebuffer
+	fallbackFramebuffer8 = swrConvert32to8(fallbackFramebuffer8, framebuffer, width, height);
+	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
+	
+	if (rc == 0)
+	{
+		char buffer[512];
+		snprintf(buffer, sizeof buffer,
+			"Oops! Couldn't call SetDIBitsToDevice for either 32-bit, 24-bit, 16-bit, or 8-bit frame buffers. "
+			"The last error is %d.", (int) GetLastError()
+		);
+		MessageBoxA(hWnd, buffer, "Butterscotch", MB_OK | MB_ICONERROR);
+		exit(1);
+	}
+}
+
+static void swrFlushFrameBuffer()
+{
+	HDC hdc = GetDC(hWnd);
+	
+	swrDrawFrameBufferToDevice(hdc, nextFrameBuffer, nextFrameBufferWidth, nextFrameBufferHeight);
 	
 	if (bShowFPS)
 	{
@@ -172,7 +231,7 @@ static void swrSwapBuffers()
 		fpsCount++;
 		
 		char buffer[64];
-		snprintf(buffer, sizeof buffer, "FPS: %d\n", fps);
+		snprintf(buffer, sizeof buffer, "FPS: %d", fps);
 		COLORREF oldColor = SetTextColor(hdc, RGB(255,255,255));
 		int oldBkMode = SetBkMode(hdc, TRANSPARENT);
 		TextOutA(hdc, 0, 0, buffer, (int) strlen(buffer));
@@ -474,7 +533,7 @@ void updateGame()
 
 	// Only swap when there isn't a room change to match the original runner.
 	if (runner->pendingRoom == -1) {
-		swrSwapBuffers();
+		swrFlushFrameBuffer();
 	}
 	
 	//DEBUG: enter a different room from the intro
