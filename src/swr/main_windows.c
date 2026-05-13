@@ -550,15 +550,25 @@ void updateGame()
 	if (runner->currentRoom->speed > 0) {
 		static bool fastForwardActive = false;
 		static bool fastForwardTabPrev = false;
+		double now = swrGetTime();
+		
 		bool fastForwardTabNow = swrIsKeyPressed(VK_TAB);
 		if (fFastForwardSpeed > 0.0 && fastForwardTabNow && !fastForwardTabPrev) {
 			fastForwardActive = !fastForwardActive;
-			lastFrameTime = swrGetTime();
+			lastFrameTime = now;
 		}
+		
 		fastForwardTabPrev = fastForwardTabNow;
 		double effectiveSpeed = (fFastForwardSpeed > 0.0 && fastForwardActive) ? fFastForwardSpeed : fSpeedMultiplier;
 		double targetFrameTime = 1.0 / (runner->currentRoom->speed * effectiveSpeed);
+		
 		double nextFrameTime = lastFrameTime + targetFrameTime;
+		double lagFactor = now - nextFrameTime;
+		
+		if (lagFactor > 0.25f) {
+			nextFrameTime = now + targetFrameTime;
+		}
+		
 		// Sleep for most of the remaining time, then spin-wait for precision
 		double remaining = nextFrameTime - swrGetTime();
 		if (remaining > 0.002) {
