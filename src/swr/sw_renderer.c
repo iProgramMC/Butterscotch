@@ -343,6 +343,11 @@ static void SWRenderer_endView(Renderer* renderer)
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = false;
+	
+	swr->portX = swr->viewX = 0;
+	swr->portY = swr->viewY = 0;
+	swr->portW = swr->viewW = swr->width;
+	swr->portH = swr->viewH = swr->height;
 }
 
 static void SWRenderer_beginGUI(Renderer* renderer, int32_t guiW, int32_t guiH,
@@ -571,12 +576,14 @@ static void swrDrawSpriteInternal(
 	int odw = dw, odh = dh;
 	int osw = sw, osh = sh;
 	
-	//adjust out of bounds checks
+	int minx = swr->portX, miny = swr->portY, maxx = swr->portX + swr->portW, maxy = swr->portY + swr->portH;
+	
+	//out of bounds adjustment checks
 	int diffxl = 0, diffyl = 0, diffxu = 0, diffyu = 0;
-	if (dx < 0) { diffxl = -dx; dx = 0; dw -= diffxl; }
-	if (dy < 0) { diffyl = -dy; dy = 0; dh -= diffyl; }
-	if (dx + dw > swr->width)  { diffxu = dx + dw - swr->width;  dw -= diffxu; }
-	if (dy + dh > swr->height) { diffyu = dy + dh - swr->height; dh -= diffyu; }
+	if (dx < minx) { diffxl = minx - dx; dx = minx; dw -= diffxl; }
+	if (dy < miny) { diffyl = miny - dy; dy = miny; dh -= diffyl; }
+	if (dx + dw > maxx) { diffxu = dx + dw - maxx; dw -= diffxu; }
+	if (dy + dh > maxy) { diffyu = dy + dh - maxy; dh -= diffyu; }
 	
 	if (diffxl != 0 || diffyl != 0 || diffxu != 0 || diffyu != 0)
 	{
@@ -742,11 +749,12 @@ static void swrDrawSpriteRotatedInternal(
 	
 	// however, we'll need to clip it against out of bounds first
 	int minXc = minX, minYc = minY, maxXc = maxX, maxYc = maxY;
+	int minx = swr->portX, miny = swr->portY, maxx = swr->portX + swr->portW, maxy = swr->portY + swr->portH;
 	
-	if (minXc < 0) minXc = 0;
-	if (minYc < 0) minYc = 0;
-	if (maxXc >= swr->width)  maxXc = swr->width;
-	if (maxYc >= swr->height) maxYc = swr->height;
+	if (minXc < minx) minXc = minx;
+	if (minYc < miny) minYc = miny;
+	if (maxXc >= maxx) maxXc = maxx;
+	if (maxYc >= maxy) maxYc = maxy;
 	
 	// some final clip checks
 	if (minXc >= maxXc || minYc >= maxYc) return;

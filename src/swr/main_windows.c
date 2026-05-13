@@ -32,7 +32,7 @@ static bool bDebugMode = true;
 static bool bTraceFrames = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
-static int nBeginningRoom = -1;
+static int nBeginningRoom = 134;
 static int nProfilerFramesBetween = 0;
 static int nSetSeed = 0;
 static int nExitAtFrame = -1;
