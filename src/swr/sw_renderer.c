@@ -1514,6 +1514,8 @@ void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
+	color = convertColor(color);
+	
 	size_t fbSize = swr->fbPitch;
 	fbSize *= swr->height;
 	for (size_t i = 0; i < fbSize; i++)
