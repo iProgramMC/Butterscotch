@@ -575,12 +575,10 @@ static void swrDrawSpriteInternal(
 		diffyl = (int)((long)diffyl * osh / odh);
 		diffxu = (int)((long)(diffxu + 1) * osw / odw);
 		diffyu = (int)((long)(diffyu + 1) * osh / odh);
-		sx += diffxl;
-		sy += diffyl;
-		sw -= diffxl;
-		sh -= diffyl;
-		sw -= diffxu;
-		sh -= diffyu;
+		sx += flipX ? diffxu : diffxl;
+		sy += flipY ? diffyu : diffyl;
+		sw -= diffxl + diffxu;
+		sh -= diffyl + diffyu;
 		if (sw <= 0 || sh <= 0) return;
 	}
 	
@@ -837,7 +835,7 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	int16_t pageId = tpag->texturePageId;
 	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
 	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
-
+	
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
 	int sw = tpag->sourceWidth;
