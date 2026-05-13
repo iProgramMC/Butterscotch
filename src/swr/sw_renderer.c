@@ -363,16 +363,26 @@ static void swrTransformPosIfNeeded(SWRenderer* swr, float* dx, float* dy)
 {
 	if (!swr->viewActive) return;
 	
-	if (dx) { *dx -= swr->viewX; *dx = *dx * ((float)swr->width  / swr->viewW); }
-	if (dy) { *dy -= swr->viewY; *dy = *dy * ((float)swr->height / swr->viewH); }
+	if (dx) {
+		float xscale = ((float)swr->portW / swr->viewW);
+		*dx -= swr->viewX;
+		*dx *= xscale;
+		*dx += swr->portX;
+	}
+	if (dy) {
+		float yscale = ((float)swr->portH / swr->viewH);
+		*dy -= swr->viewY;
+		*dy *= yscale;
+		*dy += swr->portY;
+	}
 }
 
 static void swrTransformSizeIfNeeded(SWRenderer* swr, float* dx, float* dy)
 {
 	if (!swr->viewActive || !swr->viewW || !swr->viewH) return;
 	
-	if (dx) *dx *= ((float)swr->width  / swr->viewW);
-	if (dy) *dy *= ((float)swr->height / swr->viewH);
+	if (dx) *dx *= ((float)swr->portW / swr->viewW);
+	if (dy) *dy *= ((float)swr->portH / swr->viewH);
 }
 
 FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, float alpha)
