@@ -1205,10 +1205,8 @@ static void SWRenderer_drawTextColor(Renderer* renderer, const char* text, float
 									 float xscale, float yscale, float angleDeg,
 									 int32_t c1, int32_t c2, int32_t c3, int32_t c4, float alpha)
 {
-	(void)renderer; (void)text; (void)x; (void)y;
-	(void)xscale; (void)yscale; (void)angleDeg;
-	(void)c1; (void)c2; (void)c3; (void)c4; (void)alpha;
-	UNIMP();
+	SWRenderer* swr = (SWRenderer*) renderer;
+	swrDrawText(swr, text, x, y, xscale, yscale, angleDeg, c1, renderer->drawAlpha);
 }
 
 static void SWRenderer_flush(Renderer* renderer)
