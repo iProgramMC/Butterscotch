@@ -26,7 +26,7 @@ static const char* pDataWinPath = "./data/data.win";
 static const char* pDataWinDir = "./data";
 static const char* pSaveDataDir = "./data";
 
-static bool bLazilyLoadRooms = false;
+static bool bLazilyLoadRooms = true;
 static bool bDebugMode = true;
 static bool bTraceFrames = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
@@ -232,7 +232,11 @@ void initializeGame()
 			.parseFunc = true,
 			.parseStrg = true,
 			.parseTxtr = true,
+#ifdef USE_MINIAUDIO
 			.parseAudo = true,
+#else
+			.parseAudo = false,
+#endif
 			.skipLoadingPreciseMasksForNonPreciseSprites = true,
 			.lazyLoadRooms = bLazilyLoadRooms,
 			.eagerlyLoadedRooms = NULL
