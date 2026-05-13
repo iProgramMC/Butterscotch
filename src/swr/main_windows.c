@@ -30,7 +30,7 @@ static const char* pSaveDataDir = "./data";
 static bool bLazilyLoadRooms = false;
 static bool bDebugMode = true;
 static bool bTraceFrames = false;
-static bool bTraceFPS = false;
+static bool bTraceFPS = true;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
 static int nBeginningRoom = -1;
@@ -108,53 +108,15 @@ static void keyReleased(uint8_t key)
 	keysReleasedNextFrame[key] = true;
 }
 
-static LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-	switch (uMsg)
-	{
-		case WM_DESTROY:
-			bWantToQuit = true;
-			PostQuitMessage(0);
-			return 0;
-		
-		case WM_KEYDOWN:
-			if (wParam >= 2 && wParam < 256)
-				keyPressed(winKeyToGMLKey(wParam));
-			break;
-		
-		case WM_KEYUP:
-			if (wParam >= 2 && wParam < 256)
-				keyReleased(winKeyToGMLKey(wParam));
-			break;
-		
-		case WM_ACTIVATE:
-			if (wParam == WA_INACTIVE && (HWND) lParam == hWnd)
-			{
-				memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
-				memset(keysReleasedNextFrame, 1, sizeof keysReleasedNextFrame);
-			}
-			break;
-	}
-	
-	return DefWindowProc(hWnd, uMsg, wParam, lParam);
-}
-
 static uint32_t* nextFrameBuffer = NULL;
 static int nextFrameBufferWidth = 0;
 static int nextFrameBufferHeight = 0;
 
-void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
+static void swrDrawFullFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
 {
-	nextFrameBuffer = framebuffer;
-	nextFrameBufferWidth = width;
-	nextFrameBufferHeight = height;
-}
-
-static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
-{
-	static uint16_t* fallbackFramebuffer16 = NULL;
-	static uint8_t* fallbackFramebuffer24 = NULL;
-	static uint8_t* fallbackFramebuffer8 = NULL;
+	static uint16_t* altFramebuffer16 = NULL;
+	static uint8_t* altFramebuffer24 = NULL;
+	static uint8_t* altFramebuffer8 = NULL;
 	
 	static int framebufferPreference = 32;
 
@@ -184,15 +146,15 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 		// try a 24-bit framebuffer
 		bmi.bmiHeader.biBitCount = 24;
 		
-		fallbackFramebuffer24 = swrConvert32to24(fallbackFramebuffer24, framebuffer, width, height);
-		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer24, &bmi, DIB_RGB_COLORS);
+		altFramebuffer24 = swrConvert32to24(altFramebuffer24, framebuffer, width, height);
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, altFramebuffer24, &bmi, DIB_RGB_COLORS);
 		
 		if (rc != 0)
 			return;
 		
 		MessageBoxA(hWnd, "Couldn't draw a 24-bit frame buffer, trying 16.", "Butterscotch", MB_OK);
-		free(fallbackFramebuffer24);
-		fallbackFramebuffer24 = NULL;
+		free(altFramebuffer24);
+		altFramebuffer24 = NULL;
 		framebufferPreference = 16;
 	}
 	
@@ -201,21 +163,21 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 		// try 16-bit framebuffer
 		bmi.bmiHeader.biBitCount = 16;
 		
-		fallbackFramebuffer16 = swrConvert32to16(fallbackFramebuffer16, framebuffer, width, height);
-		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer16, &bmi, DIB_RGB_COLORS);
+		altFramebuffer16 = swrConvert32to16(altFramebuffer16, framebuffer, width, height);
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, altFramebuffer16, &bmi, DIB_RGB_COLORS);
 		
 		if (rc != 0)
 			return;
 		
 		MessageBoxA(hWnd, "Couldn't draw a 16-bit frame buffer, trying 8.", "Butterscotch", MB_OK);
-		free(fallbackFramebuffer16);
-		fallbackFramebuffer16 = NULL;
+		free(altFramebuffer16);
+		altFramebuffer16 = NULL;
 		framebufferPreference = 8;
 	}
 	
 	// try 8-bit framebuffer
-	fallbackFramebuffer8 = swrConvert32to8(fallbackFramebuffer8, framebuffer, width, height);
-	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
+	altFramebuffer8 = swrConvert32to8(altFramebuffer8, framebuffer, width, height);
+	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, altFramebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
 	
 	if (rc == 0)
 	{
@@ -227,6 +189,115 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 		MessageBoxA(hWnd, buffer, "Butterscotch", MB_OK | MB_ICONERROR);
 		exit(1);
 	}
+}
+
+static LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+		case WM_DESTROY:
+			bWantToQuit = true;
+			PostQuitMessage(0);
+			return 0;
+		
+		case WM_PAINT:
+		{
+			PAINTSTRUCT ps;
+			HDC hdc = BeginPaint(hWnd, &ps);
+			
+			if (nextFrameBufferWidth != 0 && nextFrameBufferHeight != 0)
+				swrDrawFullFrameBufferToDevice(hdc, nextFrameBuffer, nextFrameBufferWidth, nextFrameBufferHeight);
+			
+			EndPaint(hWnd, &ps);
+			break;
+		}
+
+		case WM_KEYDOWN:
+			if (wParam >= 2 && wParam < 256)
+				keyPressed(winKeyToGMLKey(wParam));
+			break;
+		
+		case WM_KEYUP:
+			if (wParam >= 2 && wParam < 256)
+				keyReleased(winKeyToGMLKey(wParam));
+			break;
+		
+		case WM_ACTIVATE:
+			if (wParam == WA_INACTIVE && (HWND) lParam == hWnd)
+			{
+				memset(keysPressedNextFrame, 0, sizeof keysPressedNextFrame);
+				memset(keysReleasedNextFrame, 1, sizeof keysReleasedNextFrame);
+			}
+			break;
+	}
+	
+	return DefWindowProc(hWnd, uMsg, wParam, lParam);
+}
+
+void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
+{
+	if (!nextFrameBuffer) {
+		nextFrameBuffer = safeCalloc(sizeof(uint32_t), width * height);
+	}
+	
+	memcpy(nextFrameBuffer, framebuffer, sizeof(uint32_t) * width * height);
+	nextFrameBufferWidth = width;
+	nextFrameBufferHeight = height;
+}
+
+static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
+{
+	SWRectangle* updateRects;
+	int rectCount;
+	bool rectOverflow;
+	
+	updateRects = SWRenderer_getUpdateRects(pRenderer, &rectCount, &rectOverflow);
+	
+	RECT fullRect = { 0, 0, width, height };
+	
+	if (rectOverflow)
+	{
+		InvalidateRect(hWnd, &fullRect, FALSE);
+		return;
+	}
+	
+	if (!rectCount)
+	{
+		printf("Nothing to draw...\n");
+		return;
+	}
+	
+	// WIN32S: This isn't supported, try something else
+	size_t bufferSize = sizeof(RGNDATA) + sizeof(RECT) * rectCount;
+	RGNDATA* rgnData = safeCalloc(1, bufferSize);
+	rgnData->rdh.dwSize = sizeof(rgnData->rdh);
+	rgnData->rdh.iType = RDH_RECTANGLES;
+	rgnData->rdh.nCount = rectCount;
+	rgnData->rdh.nRgnSize = bufferSize;
+	rgnData->rdh.rcBound = fullRect;
+	
+	RECT* rects = (RECT*) rgnData->Buffer;
+	for (int i = 0; i < rectCount; i++)
+	{
+		SWRectangle *rc = &updateRects[i];
+		rects[i].left = rc->x1;
+		rects[i].top = rc->y1;
+		rects[i].right = rc->x2;
+		rects[i].bottom = rc->y2;
+	}
+	
+	HRGN fullRgn = ExtCreateRegion(NULL, bufferSize, rgnData);
+	if (fullRgn)
+	{
+		InvalidateRgn(hWnd, fullRgn, FALSE);
+		DeleteObject(fullRgn);
+	}
+	else
+	{
+		InvalidateRect(hWnd, &fullRect, FALSE);
+	}
+	
+	free(rgnData);
 }
 
 static void swrFlushFrameBuffer(uint64_t stepTicks, uint64_t renderTicks)

@@ -22,12 +22,73 @@
 
 #define TEXTURE_LRU_LENGTH 16
 
+#define DRAW_PRIMITIVE_LIST_LENGTH 1024
+#define DRAW_RECTANGLE_LIST_LENGTH 128
+
 typedef struct
 {
 	uint32_t* buffer;
 	uint16_t width, height;
 }
 SWTexture;
+
+// This seems like a silly idea, but I'll give it a shot anyway.
+//
+// The idea is to track the differences between draw primitives - not just command parameters,
+// but also the order they're performed in, etc.
+//
+// Once done, add all of the rectangles of the LAST and CURRENT command parameters up into a region,
+// and that region will be updated to the screen, instead of the entire screen.
+//
+// This should save precious cycles going through Win32 GDI especially...
+enum
+{
+	SW_CLEAR_FRAMEBUFFER,
+	SW_BEGIN_FRAME,
+	SW_END_FRAME,
+	SW_BEGIN_VIEW,
+	SW_END_VIEW,
+	SW_BEGIN_GUI,
+	SW_END_GUI,
+	SW_DRAW_SPRITE_INT,
+	SW_DRAW_SPRITE_ROTATED_INT,
+	SW_DRAW_RECTANGLE,
+	SW_DRAW_TRIANGLE,
+	SW_DRAW_LINE,
+	SW_DRAW_TEXT,
+	SW_DRAW_TEXT_COLOR,
+	SW_DRAW_TILED,
+};
+
+typedef struct
+{
+	uint8_t commandType;
+	SWRectangle affectedArea;
+	
+	union
+	{
+		struct { uint32_t color; } clearFrameBuffer;
+		struct { int32_t gameW, gameH, windowW, windowH; } beginFrame;
+		struct { int32_t viewX, viewY, viewW, viewH; } endFrame;
+		struct { int32_t viewX, viewY, viewW, viewH, portX, portY, portW, portH; } beginView;
+		struct { int32_t guiW, guiH, portX, portY, portW, portH; } beginGui;
+		struct { SWTexture* texture; int dx, dy, dw, dh, sx, sy, sw, sh; uint32_t tintColor; float alpha; } drawSpriteInt;
+		struct { SWTexture* texture; int dx, dy, dw, dh, sx, sy, sw, sh; uint32_t tintColor; float alpha, angleDeg, pivotX, pivotY; } drawSpriteRotInt;
+		struct { float x1, y1, x2, y2, alpha; uint32_t color; bool outline; } drawRectangle;
+		struct { float x1, y1, x2, y2, width; uint32_t color; float alpha; } drawLine;
+		struct { float x1, y1, x2, y2, x3, y3; bool outline; uint32_t drawColor; float drawAlpha; } drawTriangle;
+	};
+}
+SWDrawPrimitive;
+
+#define swrInitializeDrawPrimitive(dp, cmdtype) do { \
+	memset((dp), 0, sizeof *(dp)); \
+	(dp)->commandType = (cmdtype); \
+} while (0)
+
+#define swrSetWholeScreenAffected(swr, dp) do { \
+	swrSetRect(&(dp)->affectedArea, 0, 0, (swr)->width, (swr)->height); \
+} while (0)
 
 typedef struct
 {
@@ -45,6 +106,16 @@ typedef struct
 	uint32_t textureIndexLRUHead;
 	uint32_t textureIndexLRUTail;
 	size_t textureCount;
+	
+	SWDrawPrimitive* currentDPBuffer;
+	SWDrawPrimitive* lastDPBuffer;
+	SWRectangle* updateRects;
+	int dpIndex;
+	int lastDpIndex;
+	int updateIndex;
+	bool dpOverflow;
+	bool lastDpOverflow;
+	bool updateOverflow;
 	
 	bool viewActive;
 	int viewX, viewY, viewW, viewH;
@@ -271,6 +342,29 @@ static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 	return true;
 }
 
+void swrAddDrawPrimitive(Renderer* renderer, const SWDrawPrimitive* drawPrimitive)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	if (swr->dpIndex >= DRAW_PRIMITIVE_LIST_LENGTH)
+	{
+		if (!swr->dpOverflow) {
+			printf("DP overflow!\n");
+		}
+		
+		swr->dpOverflow = true;
+		return;
+	}
+	
+	SWDrawPrimitive* newPrim = &swr->currentDPBuffer[swr->dpIndex++];
+	*newPrim = *drawPrimitive;
+	
+	if (newPrim->affectedArea.x1 < 0) newPrim->affectedArea.x1 = 0;
+	if (newPrim->affectedArea.y1 < 0) newPrim->affectedArea.y1 = 0;
+	if (newPrim->affectedArea.x2 >= swr->width)  newPrim->affectedArea.x2 = swr->width;
+	if (newPrim->affectedArea.y2 >= swr->height) newPrim->affectedArea.y2 = swr->height;
+}
+
 static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
@@ -290,6 +384,17 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	swr->textureIndexLRUHead = 0;
 	swr->textureIndexLRUTail = 0;
 	
+	//allocate buffers for draw primitive tracking.
+	swr->currentDPBuffer = safeCalloc(sizeof(SWDrawPrimitive), DRAW_PRIMITIVE_LIST_LENGTH);
+	swr->lastDPBuffer = safeCalloc(sizeof(SWDrawPrimitive), DRAW_PRIMITIVE_LIST_LENGTH);
+	swr->updateRects = safeCalloc(sizeof(SWRectangle), DRAW_RECTANGLE_LIST_LENGTH);
+	swr->dpIndex = 0;
+	swr->lastDpIndex = 0;
+	swr->updateIndex = 0;
+	swr->dpOverflow = false;
+	swr->lastDpOverflow = false;
+	swr->updateOverflow = true;
+	
 	fprintf(stderr, "SWRenderer initialized.\n");
 }
 
@@ -308,21 +413,123 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 	UNIMP2();
 }
 
+static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha);
+
+SWRectangle* SWRenderer_getUpdateRects(Renderer* renderer, int* rectCount, bool* overflow)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	*overflow = swr->updateOverflow;
+	*rectCount = swr->updateIndex;
+	return swr->updateRects;
+}
+
 static void SWRenderer_endFrame(Renderer* renderer)
 {
 	(void)renderer;
 	UNIMP2();
 
 	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	swr->updateOverflow = false;
+	swr->updateIndex = 0;
+	
+	int updateIndex = 0;
+	
+	// TESTING: This draws a rectangle around the primitives that were found to have been updated.
+	SWDrawPrimitive *currPrims, *lastPrims;
+	int currPrimCount, lastPrimCount;
+	bool currOverflow, lastOverflow;
+	
+	currPrims = swr->currentDPBuffer;
+	lastPrims = swr->lastDPBuffer;
+	currPrimCount = swr->dpIndex;
+	currOverflow = swr->dpOverflow;
+	lastPrimCount = swr->lastDpIndex;
+	lastOverflow = swr->lastDpOverflow;
+	
+	// Swap the buffers and reset the DP index.
+	SWDrawPrimitive* tmp = swr->currentDPBuffer;
+	swr->currentDPBuffer = swr->lastDPBuffer;
+	swr->lastDPBuffer = tmp;
+	
+	swr->lastDpIndex = swr->dpIndex;
+	swr->lastDpOverflow = swr->dpOverflow;
+	swr->dpIndex = 0;
+	swr->dpOverflow = false;
+	
+	if (currOverflow || lastOverflow)
+	{
+		Runner_setNextFrame(swr->fb, swr->width, swr->height);
+		return;
+	}
+	
+	// determine the regions that need to be flushed
+	int minPrimCount = currPrimCount < lastPrimCount ? currPrimCount : lastPrimCount;
+	
+	for (int i = 0; i < minPrimCount; i++)
+	{
+		if (memcmp(&currPrims[i], &lastPrims[i], sizeof(SWDrawPrimitive)) == 0)
+			// exactly the same
+			continue;
+		
+		SWRectangle *rc1, *rc2;
+		rc1 = &currPrims[i].affectedArea;
+		rc2 = &lastPrims[i].affectedArea;
+		
+		if (updateIndex >= DRAW_RECTANGLE_LIST_LENGTH) { swr->updateOverflow = true; break; }
+		swr->updateRects[updateIndex++] = *rc1;
+		
+		if (updateIndex >= DRAW_RECTANGLE_LIST_LENGTH) { swr->updateOverflow = true; break; }
+		swr->updateRects[updateIndex++] = *rc2;
+	}
+	
+	for (int i = minPrimCount; i < lastPrimCount; i++)
+	{
+		SWRectangle *rc;
+		rc = &lastPrims[i].affectedArea;
+		
+		if (updateIndex >= DRAW_RECTANGLE_LIST_LENGTH) { swr->updateOverflow = true; break; }
+		swr->updateRects[updateIndex++] = *rc;
+	}
+	
+	for (int i = minPrimCount; i < currPrimCount; i++)
+	{
+		SWRectangle *rc;
+		rc = &currPrims[i].affectedArea;
+		
+		if (updateIndex >= DRAW_RECTANGLE_LIST_LENGTH) { swr->updateOverflow = true; break; }
+		swr->updateRects[updateIndex++] = *rc;
+	}
+	
+	swr->updateIndex = updateIndex;
+	
 	Runner_setNextFrame(swr->fb, swr->width, swr->height);
+}
+
+void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	color = convertColor(color);
+	
+	size_t fbSize = swr->fbPitch;
+	fbSize *= swr->height;
+	for (size_t i = 0; i < fbSize; i++)
+	{
+		swr->fb[i] = color;
+	}
+	
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_CLEAR_FRAMEBUFFER);
+	swrSetWholeScreenAffected(swr, &dp);
+	dp.clearFrameBuffer.color = color;
+	swrAddDrawPrimitive(renderer, &dp);
 }
 
 static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t viewY, int32_t viewW, int32_t viewH,
 								 int32_t portX, int32_t portY, int32_t portW, int32_t portH, float viewAngle)
 {
-	(void)renderer; (void)viewX; (void)viewY; (void)viewW; (void)viewH;
-	(void)portX; (void)portY; (void)portW; (void)portH; (void)viewAngle;
-	UNIMP2();
+	(void)viewAngle;
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = true;
@@ -334,13 +541,26 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 	swr->portY = portY;
 	swr->portW = portW;
 	swr->portH = portH;
+
+	// seems like primitives for these only seem to make things worse...?
+/*
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_BEGIN_VIEW);
+	swrSetRect(&dp.affectedArea, portX, portY, portX + portW, portY + portH);
+	dp.beginView.viewX = viewX;
+	dp.beginView.viewY = viewY;
+	dp.beginView.viewW = viewW;
+	dp.beginView.viewH = viewH;
+	dp.beginView.portX = portX;
+	dp.beginView.portY = portY;
+	dp.beginView.portW = portW;
+	dp.beginView.portH = portH;
+	swrAddDrawPrimitive(renderer, &dp);
+*/
 }
 
 static void SWRenderer_endView(Renderer* renderer)
 {
-	(void)renderer;
-	UNIMP2();
-	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->viewActive = false;
 	
@@ -348,6 +568,13 @@ static void SWRenderer_endView(Renderer* renderer)
 	swr->portY = swr->viewY = 0;
 	swr->portW = swr->viewW = swr->width;
 	swr->portH = swr->viewH = swr->height;
+	
+/*
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_END_VIEW);
+	swrSetWholeScreenAffected(swr, &dp);
+	swrAddDrawPrimitive(renderer, &dp);
+*/
 }
 
 static void SWRenderer_beginGUI(Renderer* renderer, int32_t guiW, int32_t guiH,
@@ -356,12 +583,33 @@ static void SWRenderer_beginGUI(Renderer* renderer, int32_t guiW, int32_t guiH,
 	(void)renderer; (void)guiW; (void)guiH;
 	(void)portX; (void)portY; (void)portW; (void)portH;
 	UNIMP2();
+	
+/*
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_BEGIN_GUI);
+	swrSetRect(&dp.affectedArea, portX, portY, portX + portW, portY + portH);
+	dp.beginGui.guiW = guiW;
+	dp.beginGui.guiH = guiH;
+	dp.beginGui.portX = portX;
+	dp.beginGui.portY = portY;
+	dp.beginGui.portW = portW;
+	dp.beginGui.portH = portH;
+	swrAddDrawPrimitive(renderer, &dp);
+*/
 }
 
 static void SWRenderer_endGUI(Renderer* renderer)
 {
-	(void)renderer;
+	(void) renderer;
 	UNIMP2();
+	
+/*
+	SWRenderer* swr = (SWRenderer*) renderer;
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_END_GUI);
+	swrSetWholeScreenAffected(swr, &dp);
+	swrAddDrawPrimitive(renderer, &dp);
+*/
 }
 
 static void swrTransformPosIfNeeded(SWRenderer* swr, float* dx, float* dy)
@@ -573,6 +821,21 @@ static void swrDrawSpriteInternal(
 	if (dx >= swr->width) return;
 	if (dy >= swr->height) return;
 	
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_DRAW_SPRITE_INT);
+	//There's gotta be a better way...
+	dp.drawSpriteInt.dx = dx;
+	dp.drawSpriteInt.dy = dy;
+	dp.drawSpriteInt.dw = dw;
+	dp.drawSpriteInt.dh = dh;
+	dp.drawSpriteInt.sx = sx;
+	dp.drawSpriteInt.sy = sy;
+	dp.drawSpriteInt.sw = sw;
+	dp.drawSpriteInt.sh = sh;
+	dp.drawSpriteInt.tintColor = tintColor;
+	dp.drawSpriteInt.alpha = alpha;
+	dp.drawSpriteInt.texture = texture;
+	
 	int odw = dw, odh = dh;
 	int osw = sw, osh = sh;
 	
@@ -614,6 +877,9 @@ static void swrDrawSpriteInternal(
 	// tweak these if stuff doesn't look right
 	typedef int32_t fixedp_t;
 	const int fp_prec = 8;
+
+	swrSetRect(&dp.affectedArea, dx, dy, dx + dw, dy + dh);
+	swrAddDrawPrimitive(renderer, &dp);
 
 	fixedp_t ystep = (sh == dh) ? (1 << fp_prec) : ((fixedp_t) osh << fp_prec) / odh;
 	fixedp_t xstep = (sw == dw) ? (1 << fp_prec) : ((fixedp_t) osw << fp_prec) / odw;
@@ -758,6 +1024,25 @@ static void swrDrawSpriteRotatedInternal(
 	
 	// some final clip checks
 	if (minXc >= maxXc || minYc >= maxYc) return;
+	
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_DRAW_SPRITE_ROTATED_INT);
+	dp.drawSpriteRotInt.dx = dx;
+	dp.drawSpriteRotInt.dy = dy;
+	dp.drawSpriteRotInt.dw = dw;
+	dp.drawSpriteRotInt.dh = dh;
+	dp.drawSpriteRotInt.sx = sx;
+	dp.drawSpriteRotInt.sy = sy;
+	dp.drawSpriteRotInt.sw = sw;
+	dp.drawSpriteRotInt.sh = sh;
+	dp.drawSpriteRotInt.tintColor = tintColor;
+	dp.drawSpriteRotInt.alpha = alpha;
+	dp.drawSpriteRotInt.texture = texture;
+	dp.drawSpriteRotInt.angleDeg = angleDeg;
+	dp.drawSpriteRotInt.pivotX = pivotX;
+	dp.drawSpriteRotInt.pivotY = pivotY;
+	swrSetRect(&dp.affectedArea, minXc, minYc, maxXc, maxYc);
+	swrAddDrawPrimitive(renderer, &dp);
 	
 	int sox = flipX ? sw - 1 : 0;
 	int soy = flipY ? sh - 1 : 0;
@@ -925,50 +1210,44 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 	}
 }
 
-static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
-									 float x1, float y1, float x2, float y2,
-									 float x3, float y3, float x4, float y4, float alpha)
-{
-	(void)renderer; (void)tpagIndex;
-	(void)x1; (void)y1; (void)x2; (void)y2;
-	(void)x3; (void)y3; (void)x4; (void)y4; (void)alpha;
-	UNIMP();
-}
-
 static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									 uint32_t color, float alpha, bool outline)
 {
 	color = convertColor(color);
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
-	
+
 	if (outline)
 	{
 		swrDrawRectangle(renderer, x1, y1, x2, y2, color, alpha);
 	}
-	else
-	{
-		swrTransformPosIfNeeded(swr, &x1, &y1);
-		swrTransformPosIfNeeded(swr, &x2, &y2);
+	
+	swrTransformPosIfNeeded(swr, &x1, &y1);
+	swrTransformPosIfNeeded(swr, &x2, &y2);
 
-		int x1i = swrFloor(x1), x2i = swrCeiling(x2), y1i = swrFloor(y1), y2i = swrCeiling(y2);
-		int xd = x2i - x1i;
-		int yd = y2i - y1i;
-		if (xd <= 0 || yd <= 0) return;
-		
+	int x1i = swrFloor(x1), x2i = swrCeiling(x2), y1i = swrFloor(y1), y2i = swrCeiling(y2);
+	int xd = x2i - x1i;
+	int yd = y2i - y1i;
+	if (xd <= 0 || yd <= 0) return;
+	
+	if (!outline)
+	{
 		for (int y = 0; y <= yd; y++) {
 			swrDrawHLineInt(renderer, x1i, y1i + y, xd, color, alpha);
 		}
 	}
-}
-
-static void SWRenderer_drawRectangleColor(Renderer* renderer, float x1, float y1, float x2, float y2,
-										  uint32_t color1, uint32_t color2, uint32_t color3, uint32_t color4,
-										  float alpha, bool outline)
-{
-	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
-	(void)color1; (void)color2; (void)color3; (void)color4; (void)alpha; (void)outline;
-	UNIMP();
+	
+	SWDrawPrimitive dp;
+	swrInitializeDrawPrimitive(&dp, SW_DRAW_RECTANGLE);
+	dp.drawRectangle.x1 = x1;
+	dp.drawRectangle.x2 = x2;
+	dp.drawRectangle.y1 = y1;
+	dp.drawRectangle.y2 = y2;
+	dp.drawRectangle.color = color;
+	dp.drawRectangle.alpha = alpha;
+	dp.drawRectangle.outline = outline;
+	swrSetRect(&dp.affectedArea, x1i, y1i, x2i, y2i);
+	swrAddDrawPrimitive(renderer, &dp);
 }
 
 static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -988,14 +1267,6 @@ static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, floa
 	swrDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, renderer->drawAlpha);
 	swrDrawLine(renderer, x1, y1, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
 	swrDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
-}
-
-static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
-									 float width, uint32_t color1, uint32_t color2, float alpha)
-{
-	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
-	(void)width; (void)color1; (void)color2; (void)alpha;
-	UNIMP();
 }
 
 typedef struct
@@ -1227,6 +1498,105 @@ static void SWRenderer_drawTextColor(Renderer* renderer, const char* text, float
 	swrDrawText(swr, text, x, y, xscale, yscale, angleDeg, c1, renderer->drawAlpha);
 }
 
+static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
+								 float originX, float originY, float x, float y,
+								 float xscale, float yscale, bool tileX, bool tileY,
+								 float roomW, float roomH, uint32_t color, float alpha)
+{
+	SWRenderer* swr = (SWRenderer*) renderer;
+	DataWin* dwin = renderer->dataWin;
+
+	if (0 > tpagIndex || dwin->tpag.count <= (uint32_t) tpagIndex) return;
+
+	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
+	int16_t pageId = tpag->texturePageId;
+	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+
+	float axScale = fabsf(xscale);
+	float ayScale = fabsf(yscale);
+	float tileW = (float) tpag->boundingWidth * axScale;
+	float tileH = (float) tpag->boundingHeight * ayScale;
+	if (0 >= tileW || 0 >= tileH) return;
+
+	float startX, endX, startY, endY;
+	if (tileX) {
+		startX = fmodf(x - originX * axScale, tileW);
+		if (startX > 0) startX -= tileW;
+		endX = roomW;
+	} else {
+		startX = x - originX * axScale;
+		endX = startX + tileW;
+	}
+	if (tileY) {
+		startY = fmodf(y - originY * ayScale, tileH);
+		if (startY > 0) startY -= tileH;
+		endY = roomH;
+	} else {
+		startY = y - originY * ayScale;
+		endY = startY + tileH;
+	}
+	
+	int sx = tpag->sourceX;
+	int sy = tpag->sourceY;
+	int sw = tpag->sourceWidth;
+	int sh = tpag->sourceHeight;
+
+	int localX0 = tpag->targetX - originX;
+	int localY0 = tpag->targetY - originY;
+	int localX1 = localX0 + tpag->sourceWidth;
+	int localY1 = localY0 + tpag->sourceHeight;
+	int sx0 = xscale * localX0;
+	int sy0 = yscale * localY0;
+	int sx1 = xscale * localX1;
+	int sy1 = yscale * localY1;
+
+	for (int dy = startY; endY > dy; dy += tileH) {
+		int cy = dy + (int)(originY * ayScale);
+		int vy0 = cy + sy0;
+		int vy1 = cy + sy1;
+		int dh = vy1 - vy0;
+
+		for (int dx = startX; endX > dx; dx += tileW) {
+			int cx = dx + (int)(originX * axScale);
+			int vx0 = cx + sx0;
+			int vx1 = cx + sx1;
+			int dw = vx1 - vx0;
+
+			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha);
+		}
+	}
+}
+
+// ====[ Placeholders Start ]====
+
+static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
+									 float x1, float y1, float x2, float y2,
+									 float x3, float y3, float x4, float y4, float alpha)
+{
+	(void)renderer; (void)tpagIndex;
+	(void)x1; (void)y1; (void)x2; (void)y2;
+	(void)x3; (void)y3; (void)x4; (void)y4; (void)alpha;
+	UNIMP();
+}
+
+static void SWRenderer_drawRectangleColor(Renderer* renderer, float x1, float y1, float x2, float y2,
+										  uint32_t color1, uint32_t color2, uint32_t color3, uint32_t color4,
+										  float alpha, bool outline)
+{
+	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
+	(void)color1; (void)color2; (void)color3; (void)color4; (void)alpha; (void)outline;
+	UNIMP();
+}
+
+static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
+									 float width, uint32_t color1, uint32_t color2, float alpha)
+{
+	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
+	(void)width; (void)color1; (void)color2; (void)alpha;
+	UNIMP();
+}
+
 static void SWRenderer_flush(Renderer* renderer)
 {
 	(void)renderer;
@@ -1309,76 +1679,6 @@ static void SWRenderer_drawTile(Renderer* renderer, RoomTile* tile, float offset
 {
 	UNIMP();
 	(void)renderer; (void)tile; (void)offsetX; (void)offsetY;
-}
-
-static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
-								 float originX, float originY, float x, float y,
-								 float xscale, float yscale, bool tileX, bool tileY,
-								 float roomW, float roomH, uint32_t color, float alpha)
-{
-	SWRenderer* swr = (SWRenderer*) renderer;
-	DataWin* dwin = renderer->dataWin;
-
-	if (0 > tpagIndex || dwin->tpag.count <= (uint32_t) tpagIndex) return;
-
-	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
-	int16_t pageId = tpag->texturePageId;
-	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
-
-	float axScale = fabsf(xscale);
-	float ayScale = fabsf(yscale);
-	float tileW = (float) tpag->boundingWidth * axScale;
-	float tileH = (float) tpag->boundingHeight * ayScale;
-	if (0 >= tileW || 0 >= tileH) return;
-
-	float startX, endX, startY, endY;
-	if (tileX) {
-		startX = fmodf(x - originX * axScale, tileW);
-		if (startX > 0) startX -= tileW;
-		endX = roomW;
-	} else {
-		startX = x - originX * axScale;
-		endX = startX + tileW;
-	}
-	if (tileY) {
-		startY = fmodf(y - originY * ayScale, tileH);
-		if (startY > 0) startY -= tileH;
-		endY = roomH;
-	} else {
-		startY = y - originY * ayScale;
-		endY = startY + tileH;
-	}
-	
-	int sx = tpag->sourceX;
-	int sy = tpag->sourceY;
-	int sw = tpag->sourceWidth;
-	int sh = tpag->sourceHeight;
-
-	int localX0 = tpag->targetX - originX;
-	int localY0 = tpag->targetY - originY;
-	int localX1 = localX0 + tpag->sourceWidth;
-	int localY1 = localY0 + tpag->sourceHeight;
-	int sx0 = xscale * localX0;
-	int sy0 = yscale * localY0;
-	int sx1 = xscale * localX1;
-	int sy1 = yscale * localY1;
-
-	for (int dy = startY; endY > dy; dy += tileH) {
-		int cy = dy + (int)(originY * ayScale);
-		int vy0 = cy + sy0;
-		int vy1 = cy + sy1;
-		int dh = vy1 - vy0;
-
-		for (int dx = startX; endX > dx; dx += tileW) {
-			int cx = dx + (int)(originX * axScale);
-			int vx0 = cx + sx0;
-			int vx1 = cx + sx1;
-			int dw = vx1 - vx0;
-
-			swrDrawSprite(renderer, vx0, vy0, dw, dh, swr->textures[pageId], sx, sy, sw, sh, color, alpha);
-		}
-	}
 }
 
 static int32_t SWRenderer_createSurface(Renderer* renderer, int32_t width, int32_t height)
@@ -1492,6 +1792,8 @@ static void SWRenderer_drawTiledPart(Renderer* renderer, int32_t tpagIndex,
 	(void)color; (void)alpha;
 }
 
+// ====[ Placeholders Endb ]====
+
 static RendererVtable swrVtable =
 {
 	.init                    = SWRenderer_init,
@@ -1541,20 +1843,6 @@ static RendererVtable swrVtable =
 	.surfaceGetPixels        = SWRenderer_surfaceGetPixels,
 	.drawTiledPart           = SWRenderer_drawTiledPart,
 };
-
-void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color)
-{
-	SWRenderer* swr = (SWRenderer*) renderer;
-	
-	color = convertColor(color);
-	
-	size_t fbSize = swr->fbPitch;
-	fbSize *= swr->height;
-	for (size_t i = 0; i < fbSize; i++)
-	{
-		swr->fb[i] = color;
-	}
-}
 
 Renderer* SWRenderer_create(int windowWidth, int windowHeight)
 {
