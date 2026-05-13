@@ -595,10 +595,22 @@ static void swrDrawSpriteInternal(
 	int ixs = 0, oxs = 1, iys = 0, oys = 1;
 	if (flipX) ixs = dw - 1, oxs = -1;
 	if (flipY) iys = dh - 1, oys = -1;
+	
+	// tweak these if stuff doesn't look right
+	typedef int32_t fixedp_t;
+	const int fp_prec = 8;
 
+	fixedp_t ystep = (sh == dh) ? (1 << fp_prec) : ((fixedp_t) osh << fp_prec) / odh;
+	fixedp_t xstep = (sw == dw) ? (1 << fp_prec) : ((fixedp_t) osw << fp_prec) / odw;
+	fixedp_t oxs2 = oxs * xstep;
+	fixedp_t oys2 = oys * ystep;
+	fixedp_t ixs2 = ixs * xstep;
+	fixedp_t iys2 = iys * ystep;
+	
 	if (sw == dw)
 	{
-		for (int y = 0, ys = iys; y < dh; y++, ys += oys)
+		fixedp_t ys2 = (fixedp_t) iys2;
+		for (int y = 0, ys = iys; y < dh; y++, ys += oys, ys2 += oys2)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
@@ -606,7 +618,7 @@ static void swrDrawSpriteInternal(
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
-				srcline = &texture->buffer[(sy + (int)((long)ys*osh/odh)) * texture->width + sx];
+				srcline = &texture->buffer[(sy + (int)(ys2 >> fp_prec)) * texture->width + sx];
 			
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
@@ -618,11 +630,8 @@ static void swrDrawSpriteInternal(
 	}
 	else
 	{
-		const int fp_prec = 16;
-		int64_t ystep = ((int64_t) osh << fp_prec) / odh;
-		int64_t xstep = ((int64_t) osw << fp_prec) / odw;
-		
-		for (int y = 0, ys = iys; y < dh; y++, ys += oys)
+		fixedp_t ys2 = iys2;
+		for (int y = 0, ys = iys; y < dh; y++, ys += oys, ys2 += oys2)
 		{
 			uint32_t* dstline;
 			const uint32_t* srcline;
@@ -630,11 +639,12 @@ static void swrDrawSpriteInternal(
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
 			else
-				srcline = &texture->buffer[(sy + (int)((ystep * ys) >> fp_prec)) * texture->width + sx];
+				srcline = &texture->buffer[(sy + (int)(ys2 >> fp_prec)) * texture->width + sx];
 			
-			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
+			fixedp_t xs2 = ixs2;
+			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs, xs2 += oxs2)
 			{
-				uint32_t pixel = srcline[(int)((xstep * xs) >> fp_prec)];
+				uint32_t pixel = srcline[(int)(xs2 >> fp_prec)];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
