@@ -10,7 +10,13 @@ int debug_fprintf(FILE* stream, const char* fmt, ...)
 	{
 		static char buffer[4096];
 		int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
+		
 		OutputDebugStringA(buffer);
+		
+		FILE* stderr2 = fopen("log.txt", "a+");
+		fwrite(buffer, 1, strlen(buffer), stderr2);
+		fclose(stderr2);
+		
 		va_end(args);
 		return len;
 	}
@@ -28,6 +34,10 @@ int debug_printf(const char* fmt, ...)
 	static char buffer[4096];
 	int len = vsnprintf(buffer, sizeof(buffer), fmt, args);
 	OutputDebugStringA(buffer);
+	
+	FILE* stderr2 = fopen("log.txt", "a+");
+	fwrite(buffer, 1, strlen(buffer), stderr2);
+	fclose(stderr2);
 	
 	va_end(args);
 	return len;

@@ -133,7 +133,11 @@ if(PLATFORM STREQUAL "swr")
 	# add image decoder
 	file(GLOB IMAGE_SOURCES src/image/*.c)
 	target_sources(butterscotch PRIVATE ${IMAGE_SOURCES})
-	target_link_options(butterscotch PRIVATE -Wl,-subsystem,windows)
+	target_link_options(butterscotch PRIVATE
+		"-Wl,--subsystem,windows:3.10"
+		"-Wl,--major-os-version,3"
+		"-Wl,--minor-os-version,10"
+	)
 
 	# add audio for fun
 	if(NOT AUDIO_BACKEND STREQUAL "none")
