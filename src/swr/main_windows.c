@@ -12,6 +12,7 @@
 #include "overlay_file_system.h"
 #include "audio_system.h"
 #include "sw_renderer.h"
+#include "pixel_convert.h"
 #include "fb_convert.h"
 #ifdef USE_MINIAUDIO
 #include "audio/miniaudio/ma_audio_system.h"
@@ -139,24 +140,30 @@ static LRESULT CALLBACK WindowProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM l
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
-static uint32_t* nextFrameBuffer = NULL;
+static uintpixel_t* nextFrameBuffer = NULL;
 static int nextFrameBufferWidth = 0;
 static int nextFrameBufferHeight = 0;
 
-void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
+void Runner_setNextFrame(uintpixel_t* framebuffer, int width, int height)
 {
 	nextFrameBuffer = framebuffer;
 	nextFrameBufferWidth = width;
 	nextFrameBufferHeight = height;
 }
 
-static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
+static void swrDrawFrameBufferToDevice(HDC hdc, uintpixel_t* framebuffer, int width, int height)
 {
+#if PIXEL_SIZE > 16
 	static uint16_t* fallbackFramebuffer16 = NULL;
+#endif
+#if PIXEL_SIZE > 24
 	static uint8_t* fallbackFramebuffer24 = NULL;
+#endif
+#if PIXEL_SIZE > 8
 	static uint8_t* fallbackFramebuffer8 = NULL;
+#endif
 	
-	static int framebufferPreference = 32;
+	static int framebufferPreference = PIXEL_SIZE;
 
 	int rc = 0;
 
@@ -167,6 +174,7 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 	bmi.bmiHeader.biPlanes      = 1;
 	bmi.bmiHeader.biCompression = BI_RGB;
 
+#if PIXEL_SIZE == 32
 	if (framebufferPreference == 32)
 	{
 		bmi.bmiHeader.biBitCount = 32;
@@ -195,27 +203,46 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 		fallbackFramebuffer24 = NULL;
 		framebufferPreference = 16;
 	}
-	
+#endif
+
+#if PIXEL_SIZE >= 16
 	if (framebufferPreference == 16)
 	{
 		// try 16-bit framebuffer
 		bmi.bmiHeader.biBitCount = 16;
 		
+	#if PIXEL_SIZE > 16
 		fallbackFramebuffer16 = swrConvert32to16(fallbackFramebuffer16, framebuffer, width, height);
-		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer16, &bmi, DIB_RGB_COLORS);
+		uint16_t* framebuffer16 = fallbackFramebuffer16;
+	#else
+		uint16_t* framebuffer16 = framebuffer;
+	#endif
+		rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, framebuffer16, &bmi, DIB_RGB_COLORS);
 		
 		if (rc != 0)
 			return;
 		
 		MessageBoxA(hWnd, "Couldn't draw a 16-bit frame buffer, trying 8.", "Butterscotch", MB_OK);
+	#if PIXEL_SIZE > 16
 		free(fallbackFramebuffer16);
 		fallbackFramebuffer16 = NULL;
+	#endif
 		framebufferPreference = 8;
 	}
+#endif
 	
 	// try 8-bit framebuffer
+#if PIXEL_SIZE == 32
 	fallbackFramebuffer8 = swrConvert32to8(fallbackFramebuffer8, framebuffer, width, height);
-	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, fallbackFramebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
+	uint8_t* framebuffer8 = fallbackFramebuffer8;
+#elif PIXEL_SIZE == 16
+	// TODO
+	MessageBoxA(hWnd, "TODO: Implement 16 bit to 8 bit conversion... Exiting because calling SetDIBitsToDevice with 16-bit framebuffer doesn't work.", "Butterscotch", 0);
+	exit(1);
+#else
+	framebuffer8 = framebuffer;
+#endif
+	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, framebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
 	
 	if (rc == 0)
 	{
