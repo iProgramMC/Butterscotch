@@ -34,7 +34,7 @@ static bool bTraceFrames = false;
 static bool bTraceFPS = false;
 static YoYoOperatingSystem nOsType = OS_WINDOWS;
 
-static int nBeginningRoom = 294;
+static int nBeginningRoom = -1;
 static int nProfilerFramesBetween = 0;
 static int nSetSeed = 0;
 static int nExitAtFrame = -1;

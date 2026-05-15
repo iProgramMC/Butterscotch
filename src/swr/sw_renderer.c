@@ -160,8 +160,13 @@ FORCE_INLINE void alphaBlend(uintpixel_t* dcolor, uintpixel_t scolor, int alpha)
 	*dcolor = dca | dcb | (dcg << 5) | (dcr << 10);
 #else
 	if (alpha < 240) {
+		static int alphaApproximationThingy = 0;
+		alphaApproximationThingy += 1339;
+		if (alphaApproximationThingy > 601000)
+			alphaApproximationThingy = 0;
+		
 		//gotta love that RNG
-		if ((rand() & 0xFF) >= alpha)
+		if ((alphaApproximationThingy & 0xFF) >= alpha)
 			return;
 	}
 	
