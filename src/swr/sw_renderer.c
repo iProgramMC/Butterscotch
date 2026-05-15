@@ -62,7 +62,7 @@ FORCE_INLINE bool opaque(uintpixel_t color)
 #elif PIXEL_SIZE == 16
 	return (color & 0x8000) != 0;
 #else
-	return (color == PXL_TRANSPARENT);
+	return (color != PXL_TRANSPARENT);
 #endif
 }
 
@@ -217,7 +217,7 @@ static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 
 	size_t sz = width * height;
 	for (size_t i = 0; i < sz; i++)
-		txt->buffer[i] = swrConvertPixel(rgbaSrc[i]);
+		txt->buffer[i] = swrConvertPixelTexture(rgbaSrc[i]);
 	
 	txt->width = (uint16_t) width;
 	txt->height = (uint16_t) height;
@@ -763,8 +763,6 @@ static void swrDrawSpriteRotatedInternal(
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	float angleRad = -angleDeg * M_PI / 180.0f;
-	
-	tintColor = swrConvertPixel(tintColor);
 	
 	bool flipX = false, flipY = false;
 	if (dw < 0) { dw = -dw; dx -= dw; pivotX = dw - pivotX; flipX = true; }

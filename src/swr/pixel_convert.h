@@ -8,8 +8,8 @@
 // 16-bit: 0b0RRRRRGGGGGBBBBB
 // 8-bit:  0bBBGGGRRR
 //#define PIXEL_SIZE 32
-#define PIXEL_SIZE 16
-//#define PIXEL_SIZE 8
+//#define PIXEL_SIZE 16
+#define PIXEL_SIZE 8
 
 #if PIXEL_SIZE == 32
 typedef uint32_t uintpixel_t;
@@ -72,7 +72,7 @@ uint8_t abgr8888_to_rgb332(uint32_t xl)
 }
 
 FORCE_INLINE UNUSED
-uintpixel_t swrConvertPixel(uint32_t gmPixel)
+uintpixel_t swrConvertPixelTexture(uint32_t gmPixel)
 {
 #if PIXEL_SIZE == 32
 	return (gmPixel & 0xFF00FF00) | ((gmPixel & 0xFF) << 16) | ((gmPixel >> 16) & 0xFF);
@@ -82,3 +82,9 @@ uintpixel_t swrConvertPixel(uint32_t gmPixel)
 	return abgr8888_to_rgb332(gmPixel);
 #endif
 }
+
+#if PIXEL_SIZE == 8
+#define swrConvertPixel(x) swrConvertPixelTexture((x) | 0xFF000000)
+#else
+#define swrConvertPixel swrConvertPixelTexture
+#endif
