@@ -325,6 +325,15 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 	UNIMP2();
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	float xratio = (float) swr->width / 640;
+	float yratio = (float) swr->height / 480;
+
+	portX = (int)(portX * xratio);
+	portY = (int)(portY * yratio);
+	portW = (int)(portW * xratio);
+	portH = (int)(portH * yratio);
+	
 	swr->viewActive = true;
 	swr->viewX = viewX;
 	swr->viewY = viewY;
