@@ -49,6 +49,7 @@ typedef struct
 	bool viewActive;
 	int viewX, viewY, viewW, viewH;
 	int portX, portY, portW, portH;
+	int gameW, gameH, windowW, windowH;
 }
 SWRenderer;
 
@@ -309,15 +310,15 @@ static void SWRenderer_destroy(Renderer* renderer)
 
 static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
-	(void)renderer; (void)gameW; (void)gameH; (void)windowW; (void)windowH;
-	UNIMP2();
+	SWRenderer* swr = (SWRenderer*) renderer;
+	swr->gameW = gameW;
+	swr->gameH = gameH;
+	swr->windowW = windowW;
+	swr->windowH = windowH;
 }
 
 static void SWRenderer_endFrame(Renderer* renderer)
 {
-	(void)renderer;
-	UNIMP2();
-
 	SWRenderer* swr = (SWRenderer*) renderer;
 	Runner_setNextFrame(swr->fb, swr->width, swr->height);
 }
@@ -331,8 +332,8 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
-	float xratio = (float) swr->width / 640;
-	float yratio = (float) swr->height / 480;
+	float xratio = (float) swr->windowW / swr->gameW;
+	float yratio = (float) swr->windowH / swr->gameH;
 
 	portX = (int)(portX * xratio);
 	portY = (int)(portY * yratio);
