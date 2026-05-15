@@ -94,20 +94,20 @@ FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
 	return x.l;
 }
 
-FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
+// NOTE: alpha is between 0 and 256, NOT between 0 and 255!
+FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, int alpha)
 {
 	// it's so insignificant here nobody will notice if we just don't...
-	if (alphaf <= 0.05f)
+	if (alpha < 3)
 		return;
 	
 	// it's so significant here we might as well fill in the whole color
-	if (alphaf >= 0.98f)
+	if (alpha > 253)
 	{
 		*dcolor = scolor;
 		return;
 	}
 	
-	int alpha = (int)(alphaf * 256);
 	int inval = 256 - alpha;
 	
 	Color dc, sc;
@@ -119,6 +119,11 @@ FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, float alphaf)
 	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) >> 8;
 	
 	*dcolor = dc.l;
+}
+
+FORCE_INLINE int swrIntAlpha(float alphaf)
+{
+	return (int)(alphaf * 256);
 }
 
 FORCE_INLINE bool swrMustRotate(float angleDeg)
@@ -399,7 +404,7 @@ static void swrTransformSizeIfNeeded(SWRenderer* swr, float* dx, float* dy)
 	if (dy) *dy *= ((float)swr->portH / swr->viewH);
 }
 
-FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, float alpha)
+FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, int alpha)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
@@ -409,7 +414,7 @@ FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color,
 	alphaBlend(&swr->fb[y * swr->fbPitch + x], color, alpha);
 }
 
-static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uint32_t color, float alpha)
+static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uint32_t color, int alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	
@@ -433,10 +438,10 @@ static void swrDrawHLine(Renderer* renderer, float dx, float dy, float dw, uint3
 	swrTransformSizeIfNeeded(swr, &dw, &thickness);
 
 	// TODO: use thickness
-	swrDrawHLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dw), color, alpha);
+	swrDrawHLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dw), color, swrIntAlpha(alpha));
 }
 
-static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uint32_t color, float alpha)
+static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uint32_t color, int alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	
@@ -462,7 +467,7 @@ static void swrDrawVLine(Renderer* renderer, float dx, float dy, float dh, uint3
 	swrTransformSizeIfNeeded(swr, &thickness, &dh);
 	
 	// TODO: use thickness
-	swrDrawVLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dh), color, alpha);
+	swrDrawVLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dh), color, swrIntAlpha(alpha));
 }
 
 static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha)
@@ -473,7 +478,7 @@ static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, f
 	swrDrawVLine(renderer, x2, y1, (y2 - y1) + 1, color, alpha);
 }
 
-static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, float alpha)
+static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, int alpha)
 {
 	if (x1 == x2)
 	{
@@ -556,13 +561,13 @@ static void swrDrawLine(Renderer* renderer, float x1, float y1, float x2, float 
 	swrTransformPosIfNeeded(swr, &x1, &y1);
 	swrTransformPosIfNeeded(swr, &x2, &y2);
 	swrTransformSizeIfNeeded(swr, &width, NULL);
-	swrDrawLineInt(renderer, swrFloor(x1), swrFloor(y1), swrCeiling(x2), swrCeiling(y2), swrCeiling(width), color, alpha);
+	swrDrawLineInt(renderer, swrFloor(x1), swrFloor(y1), swrCeiling(x2), swrCeiling(y2), swrCeiling(width), color, swrIntAlpha(alpha));
 }
 
 static void swrDrawSpriteInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, float alpha
+	uint32_t tintColor, int alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
@@ -697,14 +702,14 @@ static void swrDrawSprite(
 		sx, sy,
 		sw, sh,
 		tintColor,
-		alpha
+		swrIntAlpha(alpha)
 	);
 }
 
 static void swrDrawSpriteRotatedInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, float alpha,
+	uint32_t tintColor, int alpha,
 	float angleDeg,
 	float pivotX,
 	float pivotY
@@ -842,7 +847,7 @@ static void swrDrawSpriteRotated(
 		sx, sy,
 		sw, sh,
 		tintColor,
-		alpha,
+		swrIntAlpha(alpha),
 		angleDeg,
 		pivotX,
 		pivotY
@@ -960,13 +965,14 @@ static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, flo
 		swrTransformPosIfNeeded(swr, &x1, &y1);
 		swrTransformPosIfNeeded(swr, &x2, &y2);
 
+		int alphaInt = swrIntAlpha(alpha);
 		int x1i = swrFloor(x1), x2i = swrCeiling(x2), y1i = swrFloor(y1), y2i = swrCeiling(y2);
 		int xd = x2i - x1i;
 		int yd = y2i - y1i;
 		if (xd <= 0 || yd <= 0) return;
 		
 		for (int y = 0; y <= yd; y++) {
-			swrDrawHLineInt(renderer, x1i, y1i + y, xd, color, alpha);
+			swrDrawHLineInt(renderer, x1i, y1i + y, xd, color, alphaInt);
 		}
 	}
 }
