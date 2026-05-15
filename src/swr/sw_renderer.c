@@ -9,6 +9,9 @@
 #define LIKELY(cond)   __builtin_expect(!!(cond), 1)
 #define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
 
+#define UNUSED __attribute__ ((unused))
+#define FORCE_INLINE static inline __attribute__((always_inline))
+
 #define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
 //#define UNIMP() do { } while (0)
 #define UNIMP2() do { } while (0)
@@ -129,6 +132,8 @@ typedef union
 }
 Color;
 
+FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
+FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
 FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
 
 FORCE_INLINE uint32_t convertColor(uint32_t p)

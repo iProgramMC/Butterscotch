@@ -3,9 +3,6 @@
 #include <stdint.h>
 #include "renderer.h"
 
-#define UNUSED __attribute__ ((unused))
-#define FORCE_INLINE static inline __attribute__((always_inline)) __attribute__((unused))
-
 typedef struct {
 	int16_t x1, y1, x2, y2;
 }
@@ -17,9 +14,6 @@ SWRectangle;
 	(rc)->x2 = (_x2); \
 	(rc)->y2 = (_y2); \
 } while (0)
-
-FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
-FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
 
 Renderer* SWRenderer_create(int windowWidth, int windowHeight);
 
