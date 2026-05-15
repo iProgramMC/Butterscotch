@@ -2,15 +2,11 @@
 #include <limits.h>
 #include <float.h>
 #include <assert.h>
+#include "defines.h"
 #include "sw_renderer.h"
 #include "text_utils.h"
+#include "pixel_convert.h"
 #include "image/image_decoder.h"
-
-#define LIKELY(cond)   __builtin_expect(!!(cond), 1)
-#define UNLIKELY(cond) __builtin_expect(!!(cond), 0)
-
-#define UNUSED __attribute__ ((unused))
-#define FORCE_INLINE static inline __attribute__((always_inline))
 
 #define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
 //#define UNIMP() do { } while (0)
@@ -24,7 +20,7 @@
 
 typedef struct
 {
-	uint32_t* buffer;
+	uintpixel_t* buffer;
 	uint16_t width, height;
 }
 SWTexture;
@@ -37,8 +33,8 @@ typedef struct
 	uint16_t width;
 	uint16_t height;
 	// Framebuffer
-	uint32_t* fb;
-	uint16_t fbPitch;
+	uintpixel_t* fb;
+	uint16_t fbPitch; // in sizeof(uintpixel_t) units, NOT in bytes!
 	
 	SWTexture** textures;
 	uint32_t* textureIndexLRU;
@@ -55,33 +51,32 @@ SWRenderer;
 
 void Runner_setNextFrame(uint32_t* framebuffer, int width, int height);
 
+FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
+FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
+FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
+
+FORCE_INLINE bool opaque(uintpixel_t color)
+{
+#if PIXEL_SIZE == 32
+	return (color & 0xFF000000) != 0;
+#elif PIXEL_SIZE == 16
+	return (color & 0x8000) != 0;
+#else
+	return (color == PXL_TRANSPARENT);
+#endif
+}
+
 typedef union
 {
 	struct { uint8_t b, g, r, a; } p;
 	uint32_t l;
 }
-Color;
+Color32;
 
-FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
-FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
-FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
-
-FORCE_INLINE uint32_t convertColor(uint32_t p)
+FORCE_INLINE uintpixel_t tint(uintpixel_t tintColor, uintpixel_t color)
 {
-	uint32_t np = p & 0xFF00FF00;
-	np |= (p & 0xFF) << 16;
-	np |= (p >> 16) & 0xFF;
-	return np;
-}
-
-FORCE_INLINE bool opaque(uint32_t color)
-{
-	return (color & 0xFF000000) != 0;
-}
-
-FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
-{
-	Color x, y;
+#if PIXEL_SIZE == 32
+	Color32 x, y;
 	
 	if ((tintColor & 0xFFFFFF) == 0xFFFFFF)
 		return color;
@@ -93,11 +88,37 @@ FORCE_INLINE uint32_t tint(uint32_t tintColor, uint32_t color)
 	x.p.g = (int)x.p.g * y.p.g / 255;
 	x.p.r = (int)x.p.r * y.p.r / 255;
 	return x.l;
+#elif PIXEL_SIZE == 16
+	if ((tintColor & 0x7FFF) == 0x7FFF)
+		return color;
+	
+	int tcb = tintColor & 0x1F;
+	int tcg = (tintColor >> 5) & 0x1F;
+	int tcr = (tintColor >> 10) & 0x1F;
+	int tca = tintColor & 0x8000;
+	
+	int cb = color & 0x1F;
+	int cg = (color >> 5) & 0x1F;
+	int cr = (color >> 10) & 0x1F;
+	int ca = color & 0x8000;
+	
+	cb = (cb * tcb) / 32;
+	cg = (cg * tcg) / 32;
+	cr = (cr * tcr) / 32;
+	return ca | cb | (cg << 5) | (cr << 10);
+#elif PIXEL_SIZE == 8
+	// fast but hacky
+	if (tintColor == 0xFF || tintColor == PXL_TRANSPARENT)
+		return color;
+	
+	return color & tintColor;
+#endif
 }
 
 // NOTE: alpha is between 0 and 256, NOT between 0 and 255!
-FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, int alpha)
+FORCE_INLINE void alphaBlend(uintpixel_t* dcolor, uintpixel_t scolor, int alpha)
 {
+#if PIXEL_SIZE == 32 || PIXEL_SIZE == 16
 	// it's so insignificant here nobody will notice if we just don't...
 	if (alpha < 3)
 		return;
@@ -110,8 +131,10 @@ FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, int alpha)
 	}
 	
 	int inval = 256 - alpha;
-	
-	Color dc, sc;
+#endif
+
+#if PIXEL_SIZE == 32
+	Color32 dc, sc;
 	dc.l = *dcolor;
 	sc.l = scolor;
 	
@@ -120,6 +143,32 @@ FORCE_INLINE void alphaBlend(uint32_t* dcolor, uint32_t scolor, int alpha)
 	dc.p.b = (dc.p.b * inval + sc.p.b * alpha) >> 8;
 	
 	*dcolor = dc.l;
+#elif PIXEL_SIZE == 16
+	int scb = scolor & 0x1F;
+	int scg = (scolor >> 5) & 0x1F;
+	int scr = (scolor >> 10) & 0x1F;
+	int sca = scolor & 0x8000;
+	
+	uintpixel_t _dcolor = *dcolor;
+	int dcb = _dcolor & 0x1F;
+	int dcg = (_dcolor >> 5) & 0x1F;
+	int dcr = (_dcolor >> 10) & 0x1F;
+	int dca = _dcolor & 0x8000;
+	
+	dcr = (dcr * inval + scr * alpha) >> 8;
+	dcg = (dcg * inval + scg * alpha) >> 8;
+	dcb = (dcb * inval + scb * alpha) >> 8;
+	
+	*dcolor = dca | dcb | (dcg << 5) | (dcr << 10);
+#else
+	if (alpha < 240) {
+		//gotta love that RNG
+		if ((rand() & 0xFF) >= alpha)
+			return;
+	}
+	
+	*dcolor = scolor;
+#endif
 }
 
 FORCE_INLINE int swrIntAlpha(float alphaf)
@@ -164,13 +213,13 @@ FORCE_INLINE int swrCeiling(float x)
 static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 {
 	SWTexture* txt = safeCalloc(1, sizeof(SWTexture));
-	txt->buffer = safeCalloc(width * height, sizeof(uint32_t));
+	txt->buffer = safeCalloc(width * height, sizeof(uintpixel_t));
 	
 	const uint32_t* rgbaSrc = (const uint32_t*) srcBuffer;
 
 	size_t sz = width * height;
 	for (size_t i = 0; i < sz; i++)
-		txt->buffer[i] = convertColor(rgbaSrc[i]);
+		txt->buffer[i] = swrConvertPixel(rgbaSrc[i]);
 	
 	txt->width = (uint16_t) width;
 	txt->height = (uint16_t) height;
@@ -284,7 +333,7 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	renderer->dataWin = dataWin;
 	
 	//allocate frame buffer
-	swr->fb = safeCalloc(swr->width * swr->height, sizeof(uint32_t));
+	swr->fb = safeCalloc(swr->width * swr->height, sizeof(uintpixel_t));
 	swr->fbPitch = swr->width;
 	
 	//allocate texture buffer
@@ -405,7 +454,7 @@ static void swrTransformSizeIfNeeded(SWRenderer* swr, float* dx, float* dy)
 	if (dy) *dy *= ((float)swr->portH / swr->viewH);
 }
 
-FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color, int alpha)
+FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uintpixel_t color, int alpha)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
@@ -415,7 +464,7 @@ FORCE_INLINE void swrPlotPixel(Renderer* renderer, int x, int y, uint32_t color,
 	alphaBlend(&swr->fb[y * swr->fbPitch + x], color, alpha);
 }
 
-static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uint32_t color, int alpha)
+static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uintpixel_t color, int alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	
@@ -425,12 +474,12 @@ static void swrDrawHLineInt(Renderer* renderer, int dx, int dy, int dw, uint32_t
 	if (dx + dw >= swr->width) dw = swr->width - dx;
 	if (dw <= 0) return;
 	
-	uint32_t *line = &swr->fb[dy * swr->fbPitch + dx];
+	uintpixel_t *line = &swr->fb[dy * swr->fbPitch + dx];
 	for (int i = 0; i < dw; i++)
 		alphaBlend(&line[i], color, alpha);
 }
 
-static void swrDrawHLine(Renderer* renderer, float dx, float dy, float dw, uint32_t color, float alpha)
+static void swrDrawHLine(Renderer* renderer, float dx, float dy, float dw, uintpixel_t color, float alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	float thickness = 1;
@@ -442,7 +491,7 @@ static void swrDrawHLine(Renderer* renderer, float dx, float dy, float dw, uint3
 	swrDrawHLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dw), color, swrIntAlpha(alpha));
 }
 
-static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uint32_t color, int alpha)
+static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uintpixel_t color, int alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	
@@ -454,12 +503,12 @@ static void swrDrawVLineInt(Renderer* renderer, int dx, int dy, int dh, uint32_t
 	
 	for (int i = 0; i < dh; i++)
 	{
-		uint32_t *line = &swr->fb[(dy + i) * swr->fbPitch + dx];
+		uintpixel_t *line = &swr->fb[(dy + i) * swr->fbPitch + dx];
 		alphaBlend(&line[0], color, alpha);
 	}
 }
 
-static void swrDrawVLine(Renderer* renderer, float dx, float dy, float dh, uint32_t color, float alpha)
+static void swrDrawVLine(Renderer* renderer, float dx, float dy, float dh, uintpixel_t color, float alpha)
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
 	float thickness = 1;
@@ -471,7 +520,7 @@ static void swrDrawVLine(Renderer* renderer, float dx, float dy, float dh, uint3
 	swrDrawVLineInt(renderer, swrFloor(dx), swrFloor(dy), swrCeiling(dh), color, swrIntAlpha(alpha));
 }
 
-static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uint32_t color, float alpha)
+static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2, uintpixel_t color, float alpha)
 {
 	swrDrawHLine(renderer, x1, y1, (x2 - x1) + 1, color, alpha);
 	swrDrawHLine(renderer, x1, y2, (x2 - x1) + 1, color, alpha);
@@ -479,7 +528,7 @@ static void swrDrawRectangle(Renderer* renderer, float x1, float y1, float x2, f
 	swrDrawVLine(renderer, x2, y1, (y2 - y1) + 1, color, alpha);
 }
 
-static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uint32_t color, int alpha)
+static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, int width, uintpixel_t color, int alpha)
 {
 	if (x1 == x2)
 	{
@@ -556,7 +605,7 @@ static void swrDrawLineInt(Renderer* renderer, int x1, int y1, int x2, int y2, i
 	}
 }
 
-static void swrDrawLine(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uint32_t color, float alpha)
+static void swrDrawLine(Renderer* renderer, float x1, float y1, float x2, float y2, float width, uintpixel_t color, float alpha)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swrTransformPosIfNeeded(swr, &x1, &y1);
@@ -568,12 +617,10 @@ static void swrDrawLine(Renderer* renderer, float x1, float y1, float x2, float 
 static void swrDrawSpriteInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, int alpha
+	uintpixel_t tintColor, int alpha
 )
 {
 	SWRenderer *swr = (SWRenderer*) renderer;
-	
-	tintColor = convertColor(tintColor);
 	
 	bool flipX = false, flipY = false;
 	if (dw < 0) { dx += dw; dw = -dw; flipX = true; }
@@ -702,7 +749,7 @@ static void swrDrawSprite(
 		texture,
 		sx, sy,
 		sw, sh,
-		tintColor,
+		swrConvertPixel(tintColor),
 		swrIntAlpha(alpha)
 	);
 }
@@ -710,7 +757,7 @@ static void swrDrawSprite(
 static void swrDrawSpriteRotatedInternal(
 	Renderer* renderer, int dx, int dy, int dw, int dh,
 	SWTexture* texture, int sx, int sy, int sw, int sh,
-	uint32_t tintColor, int alpha,
+	uintpixel_t tintColor, int alpha,
 	float angleDeg,
 	float pivotX,
 	float pivotY
@@ -719,7 +766,7 @@ static void swrDrawSpriteRotatedInternal(
 	SWRenderer* swr = (SWRenderer*) renderer;
 	float angleRad = -angleDeg * M_PI / 180.0f;
 	
-	tintColor = convertColor(tintColor);
+	tintColor = swrConvertPixel(tintColor);
 	
 	bool flipX = false, flipY = false;
 	if (dw < 0) { dw = -dw; dx -= dw; pivotX = dw - pivotX; flipX = true; }
@@ -847,7 +894,7 @@ static void swrDrawSpriteRotated(
 		texture,
 		sx, sy,
 		sw, sh,
-		tintColor,
+		swrConvertPixel(tintColor),
 		swrIntAlpha(alpha),
 		angleDeg,
 		pivotX,
@@ -953,13 +1000,13 @@ static void SWRenderer_drawSpritePos(Renderer* renderer, int32_t tpagIndex,
 static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, float x2, float y2,
 									 uint32_t color, float alpha, bool outline)
 {
-	color = convertColor(color);
+	uintpixel_t pxcolor = swrConvertPixel(color);
 	
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
 	if (outline)
 	{
-		swrDrawRectangle(renderer, x1, y1, x2, y2, color, alpha);
+		swrDrawRectangle(renderer, x1, y1, x2, y2, pxcolor, alpha);
 	}
 	else
 	{
@@ -973,7 +1020,7 @@ static void SWRenderer_drawRectangle(Renderer* renderer, float x1, float y1, flo
 		if (xd <= 0 || yd <= 0) return;
 		
 		for (int y = 0; y <= yd; y++) {
-			swrDrawHLineInt(renderer, x1i, y1i + y, xd, color, alphaInt);
+			swrDrawHLineInt(renderer, x1i, y1i + y, xd, pxcolor, alphaInt);
 		}
 	}
 }
@@ -993,7 +1040,7 @@ static void SWRenderer_drawLine(Renderer* renderer, float x1, float y1, float x2
 	(void)renderer; (void)x1; (void)y1; (void)x2; (void)y2;
 	(void)width; (void)color; (void)alpha;
 	
-	swrDrawLine(renderer, x1, y1, x2, y2, width, color, alpha);
+	swrDrawLine(renderer, x1, y1, x2, y2, width, swrConvertPixel(color), alpha);
 }
 
 static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -1001,9 +1048,10 @@ static void SWRenderer_drawTriangle(Renderer* renderer, float x1, float y1, floa
 {
 	(void)outline;
 	
-	swrDrawLine(renderer, x1, y1, x2, y2, 1, renderer->drawColor, renderer->drawAlpha);
-	swrDrawLine(renderer, x1, y1, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
-	swrDrawLine(renderer, x2, y2, x3, y3, 1, renderer->drawColor, renderer->drawAlpha);
+	uintpixel_t drawColorCvt = swrConvertPixel(renderer->drawColor);
+	swrDrawLine(renderer, x1, y1, x2, y2, 1, drawColorCvt, renderer->drawAlpha);
+	swrDrawLine(renderer, x1, y1, x3, y3, 1, drawColorCvt, renderer->drawAlpha);
+	swrDrawLine(renderer, x2, y2, x3, y3, 1, drawColorCvt, renderer->drawAlpha);
 }
 
 static void SWRenderer_drawLineColor(Renderer* renderer, float x1, float y1, float x2, float y2,
@@ -1562,13 +1610,13 @@ void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	
-	color = convertColor(color);
+	uintpixel_t pxcolor = swrConvertPixel(color);
 	
 	size_t fbSize = swr->fbPitch;
 	fbSize *= swr->height;
 	for (size_t i = 0; i < fbSize; i++)
 	{
-		swr->fb[i] = color;
+		swr->fb[i] = pxcolor;
 	}
 }
 

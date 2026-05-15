@@ -1,27 +1,21 @@
 #include <stdlib.h>
 #include <windows.h>
 #include "fb_convert.h"
+#include "pixel_convert.h"
 #include "utils.h"
 
-typedef union
+FORCE_INLINE UNUSED
+uint16_t argb8888_to_rgb1555(uint32_t xl)
 {
-	struct {
-		uint8_t b, g, r, a;
-	} p;
-	uint32_t l;
-}
-Pixel32;
-
-static uint16_t argb8888_to_rgb1555(uint32_t xl)
-{
-	Pixel32 x;
+	Pixel32ARGB x;
 	x.l = xl;
 	return (x.p.b >> 3) | ((x.p.g >> 3) << 5) | ((x.p.r >> 3) << 10);
 }
 
-static uint8_t argb8888_to_rgb332(uint32_t xl)
+FORCE_INLINE UNUSED
+uint8_t argb8888_to_rgb332(uint32_t xl)
 {
-	Pixel32 x;
+	Pixel32ARGB x;
 	x.l = xl;
 	return (x.p.r >> 5) | ((x.p.g >> 5) << 3) | ((x.p.b >> 6) << 6);
 }
@@ -35,7 +29,7 @@ uint8_t* swrConvert32to24(uint8_t* dest, uint32_t* src, int width, int height)
 	
 	for (int i = 0, j = 0; i < size; i++)
 	{
-		Pixel32 x;
+		Pixel32ARGB x;
 		x.l = src[i];
 		
 		dest[j++] = x.p.b;
