@@ -49,7 +49,7 @@ typedef struct
 }
 SWRenderer;
 
-void Runner_setNextFrame(uint32_t* framebuffer, int width, int height);
+void Runner_setNextFrame(uintpixel_t* framebuffer, int width, int height);
 
 FORCE_INLINE int swrMin(int a, int b) { return a < b ? a : b; }
 FORCE_INLINE int swrMax(int a, int b) { return a > b ? a : b; }
@@ -95,7 +95,6 @@ FORCE_INLINE uintpixel_t tint(uintpixel_t tintColor, uintpixel_t color)
 	int tcb = tintColor & 0x1F;
 	int tcg = (tintColor >> 5) & 0x1F;
 	int tcr = (tintColor >> 10) & 0x1F;
-	int tca = tintColor & 0x8000;
 	
 	int cb = color & 0x1F;
 	int cg = (color >> 5) & 0x1F;
@@ -147,8 +146,7 @@ FORCE_INLINE void alphaBlend(uintpixel_t* dcolor, uintpixel_t scolor, int alpha)
 	int scb = scolor & 0x1F;
 	int scg = (scolor >> 5) & 0x1F;
 	int scr = (scolor >> 10) & 0x1F;
-	int sca = scolor & 0x8000;
-	
+
 	uintpixel_t _dcolor = *dcolor;
 	int dcb = _dcolor & 0x1F;
 	int dcg = (_dcolor >> 5) & 0x1F;
@@ -689,8 +687,8 @@ static void swrDrawSpriteInternal(
 		fixedp_t ys2 = (fixedp_t) iys2;
 		for (int y = 0, ys = iys; y < dh; y++, ys += oys, ys2 += oys2)
 		{
-			uint32_t* dstline;
-			const uint32_t* srcline;
+			uintpixel_t* dstline;
+			const uintpixel_t* srcline;
 			dstline = &swr->fb[(dy + y) * swr->fbPitch + dx];
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
@@ -699,7 +697,7 @@ static void swrDrawSpriteInternal(
 			
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs)
 			{
-				uint32_t pixel = srcline[xs];
+				uintpixel_t pixel = srcline[xs];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
@@ -710,8 +708,8 @@ static void swrDrawSpriteInternal(
 		fixedp_t ys2 = iys2;
 		for (int y = 0, ys = iys; y < dh; y++, ys += oys, ys2 += oys2)
 		{
-			uint32_t* dstline;
-			const uint32_t* srcline;
+			uintpixel_t* dstline;
+			const uintpixel_t* srcline;
 			dstline = &swr->fb[(dy + y) * swr->fbPitch + dx];
 			if (dh == sh)
 				srcline = &texture->buffer[(sy + ys) * texture->width + sx];
@@ -721,7 +719,7 @@ static void swrDrawSpriteInternal(
 			fixedp_t xs2 = ixs2;
 			for (int x = 0, xs = ixs; x < dw; x++, xs += oxs, xs2 += oxs2)
 			{
-				uint32_t pixel = srcline[(int)(xs2 >> fp_prec)];
+				uintpixel_t pixel = srcline[(int)(xs2 >> fp_prec)];
 				if (opaque(pixel))
 					alphaBlend(&dstline[x], tint(tintColor, pixel), alpha);
 			}
@@ -831,7 +829,7 @@ static void swrDrawSpriteRotatedInternal(
 	
 	for (int cy = minYc; cy < maxYc; cy++)
 	{
-		uint32_t *dstline = &swr->fb[cy * swr->fbPitch];
+		uintpixel_t *dstline = &swr->fb[cy * swr->fbPitch];
 		for (int cx = minXc; cx < maxXc; cx++)
 		{
 			// we need to determine the texture-space coordinate of cx/cy
@@ -862,7 +860,7 @@ static void swrDrawSpriteRotatedInternal(
 			tx += sx;
 			ty += sy;
 			
-			uint32_t src = texture->buffer[ty * texture->width + tx];
+			uintpixel_t src = texture->buffer[ty * texture->width + tx];
 			
 			if (opaque(src))
 				alphaBlend(&dstline[cx], tint(tintColor, src), alpha);

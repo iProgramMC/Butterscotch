@@ -7,8 +7,8 @@
 // 32-bit: 0xAARRGGBB
 // 16-bit: 0b0RRRRRGGGGGBBBBB
 // 8-bit:  0bBBGGGRRR
-#define PIXEL_SIZE 32
-//#define PIXEL_SIZE 16
+//#define PIXEL_SIZE 32
+#define PIXEL_SIZE 16
 //#define PIXEL_SIZE 8
 
 #if PIXEL_SIZE == 32

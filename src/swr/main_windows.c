@@ -236,11 +236,18 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uintpixel_t* framebuffer, int wi
 	fallbackFramebuffer8 = swrConvert32to8(fallbackFramebuffer8, framebuffer, width, height);
 	uint8_t* framebuffer8 = fallbackFramebuffer8;
 #elif PIXEL_SIZE == 16
-	// TODO
-	MessageBoxA(hWnd, "TODO: Implement 16 bit to 8 bit conversion... Exiting because calling SetDIBitsToDevice with 16-bit framebuffer doesn't work.", "Butterscotch", 0);
+	// TODO: Implement 16-bit to 8-bit conversion...
+	uint8_t* framebuffer8 = (uint8_t*) framebuffer;
+	MessageBoxA(
+		hWnd,
+		"Exiting because calling SetDIBitsToDevice with 16-bit framebuffer doesn't work.\n\n"
+		"Tell iProgramInCpp to support conversion from 16-bit to 8-bit pixels!",
+		"Butterscotch",
+		MB_OK
+	);
 	exit(1);
 #else
-	framebuffer8 = framebuffer;
+	uint8_t* framebuffer8 = framebuffer;
 #endif
 	rc = SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, height, framebuffer8, swrSetup8BitBitmapInfo(width, height), DIB_RGB_COLORS);
 	
