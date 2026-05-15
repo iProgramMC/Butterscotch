@@ -245,6 +245,16 @@ void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
 	nextFrameBufferHeight = height;
 }
 
+static int swrCompareRects(const void* rc1v, const void* rc2v)
+{
+	const RECT *rc1 = rc1v, *rc2 = rc2v;
+	if (rc1->top != rc2->top) return (rc1->top < rc2->top) ? -1 : 1;
+	if (rc1->left != rc2->left) return (rc1->left < rc2->left) ? -1 : 1;
+	if (rc1->bottom != rc2->bottom) return (rc1->bottom < rc2->bottom) ? -1 : 1;
+	if (rc1->right != rc2->right) return (rc1->right < rc2->right) ? -1 : 1;
+	return 0;
+}
+
 static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width, int height)
 {
 	SWRectangle* updateRects;
@@ -261,30 +271,65 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 		return;
 	}
 	
-	if (!rectCount)
-	{
-		printf("Nothing to draw...\n");
-		return;
-	}
-	
 	// WIN32S: This isn't supported, try something else
-	size_t bufferSize = sizeof(RGNDATA) + sizeof(RECT) * rectCount;
+	size_t bufferSize = sizeof(RGNDATAHEADER) + sizeof(RECT) * rectCount;
 	RGNDATA* rgnData = safeCalloc(1, bufferSize);
 	rgnData->rdh.dwSize = sizeof(rgnData->rdh);
 	rgnData->rdh.iType = RDH_RECTANGLES;
 	rgnData->rdh.nCount = rectCount;
 	rgnData->rdh.nRgnSize = bufferSize;
-	rgnData->rdh.rcBound = fullRect;
 	
+	RECT extentRect = { 9999, 9999, -9999, -9999 };
 	RECT* rects = (RECT*) rgnData->Buffer;
+	int actualRectCount = 0;
 	for (int i = 0; i < rectCount; i++)
 	{
 		SWRectangle *rc = &updateRects[i];
-		rects[i].left = rc->x1;
-		rects[i].top = rc->y1;
-		rects[i].right = rc->x2;
-		rects[i].bottom = rc->y2;
+		RECT *drc = &rects[actualRectCount];
+		drc->left = rc->x1;
+		drc->top = rc->y1;
+		drc->right = rc->x2;
+		drc->bottom = rc->y2;
+
+		if (drc->left < 0) drc->left = 0;
+		if (drc->top < 0) drc->top = 0;
+		if (drc->right > width) drc->right = width;
+		if (drc->bottom > height) drc->bottom = height;
+
+		if (drc->left == drc->right) continue;
+
+		//swap degenerated rectangles if needed
+		if (drc->left > drc->right) { int tmp = drc->right; drc->right = drc->left; drc->left = tmp; }
+		if (drc->top > drc->bottom) { int tmp = drc->bottom; drc->bottom = drc->top; drc->top = tmp; }
+		
+		//calculate the actual extent rectangle
+		extentRect.left = swrMin(extentRect.left, drc->left);
+		extentRect.top = swrMin(extentRect.top, drc->top);
+		extentRect.right = swrMax(extentRect.right, drc->right);
+		extentRect.bottom = swrMax(extentRect.bottom, drc->bottom);
+		
+		actualRectCount++;
 	}
+	
+	if (extentRect.left < 0) extentRect.left = 0;
+	if (extentRect.top < 0) extentRect.top = 0;
+	if (extentRect.right > WINDOW_WIDTH) extentRect.right = WINDOW_WIDTH;
+	if (extentRect.bottom > WINDOW_HEIGHT) extentRect.bottom = WINDOW_HEIGHT;
+	
+	if (!actualRectCount)
+	{
+		printf("Nothing to draw...\n");
+		free(rgnData);
+		return;
+	}
+	
+	rgnData->rdh.rcBound = extentRect;
+	rgnData->rdh.nCount = actualRectCount;
+	bufferSize = sizeof(RGNDATAHEADER) + sizeof(RECT) * actualRectCount;
+	rgnData->rdh.nRgnSize = bufferSize-sizeof(RGNDATAHEADER);
+	
+	// Sort rectangles by position
+	qsort(rects, actualRectCount, sizeof(RECT), swrCompareRects);
 	
 	HRGN fullRgn = ExtCreateRegion(NULL, bufferSize, rgnData);
 	if (fullRgn)
@@ -294,6 +339,7 @@ static void swrDrawFrameBufferToDevice(HDC hdc, uint32_t* framebuffer, int width
 	}
 	else
 	{
+		printf("Couldn't create full RGN...  Last Error: %d.  Buffer Size: %zu   RectCount: %d\n", GetLastError(), bufferSize, actualRectCount);
 		InvalidateRect(hWnd, &fullRect, FALSE);
 	}
 	
