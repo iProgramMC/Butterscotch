@@ -68,26 +68,17 @@ FORCE_INLINE int swrAbs(int x) { return x < 0 ? -x : x; }
 
 FORCE_INLINE bool opaque(uintpixel_t color)
 {
-#if PIXEL_SIZE == 32
-	return (color & 0xFF000000) != 0;
-#elif PIXEL_SIZE == 16
-	return (color & 0x8000) != 0;
-#else
+#if PIXEL_SIZE == 8
 	return (color != PXL_TRANSPARENT);
+#else
+	return (color & TRANSPARENT_MASK) != 0;
 #endif
 }
-
-typedef union
-{
-	struct { uint8_t b, g, r, a; } p;
-	uint32_t l;
-}
-Color32;
 
 FORCE_INLINE uintpixel_t tint(uintpixel_t tintColor, uintpixel_t color)
 {
 #if PIXEL_SIZE == 32
-	Color32 x, y;
+	Pixel32ARGB x, y;
 	
 	if ((tintColor & 0xFFFFFF) == 0xFFFFFF)
 		return color;
@@ -144,7 +135,7 @@ FORCE_INLINE void alphaBlend(uintpixel_t* dcolor, uintpixel_t scolor, int alpha)
 #endif
 
 #if PIXEL_SIZE == 32
-	Color32 dc, sc;
+	Pixel32ARGB dc, sc;
 	dc.l = *dcolor;
 	sc.l = scolor;
 	

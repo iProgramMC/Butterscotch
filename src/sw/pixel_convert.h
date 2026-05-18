@@ -1,6 +1,7 @@
 #pragma once
 
 #include "defines.h"
+#include "binary_utils.h"
 
 #if PIXEL_SIZE == 32
 typedef uint32_t uintpixel_t;
@@ -14,7 +15,6 @@ typedef uint8_t uintpixel_t;
 #endif
 
 // The native format coming out of GameMaker Studio's assets.
-// Bytes are in the correct order even in big endian mode.
 typedef union
 {
 	struct {
@@ -28,7 +28,11 @@ Pixel32ABGR;
 typedef union
 {
 	struct {
+#ifdef IS_BIG_ENDIAN
+		uint8_t a, r, g, b;
+#else
 		uint8_t b, g, r, a;
+#endif
 	} p;
 	uint32_t l;
 }
@@ -66,7 +70,7 @@ uint8_t abgr8888_to_rgb332(uint32_t xl)
 }
 
 FORCE_INLINE UNUSED
-uintpixel_t swrConvertPixelTexture(uint32_t gmPixel)
+uintpixel_t swrConvertPixelBase(uint32_t gmPixel)
 {
 #if PIXEL_SIZE == 32
 	return (gmPixel & 0xFF00FF00) | ((gmPixel & 0xFF) << 16) | ((gmPixel >> 16) & 0xFF);
@@ -77,8 +81,25 @@ uintpixel_t swrConvertPixelTexture(uint32_t gmPixel)
 #endif
 }
 
+#if PIXEL_SIZE == 32
+#define TRANSPARENT_MASK 0xFF000000
+#elif PIXEL_SIZE == 16
+#define TRANSPARENT_MASK 0x8000
+#endif
+
 #if PIXEL_SIZE == 8
-#define swrConvertPixel(x) swrConvertPixelTexture((x) | 0xFF000000)
+
+#define swrConvertPixel(x)        swrConvertPixelBase((x) | 0xFF000000)
+#define swrConvertPixelTexture(x) swrConvertPixelBase(x)
+
+#elif defined IS_BIG_ENDIAN
+
+#define swrConvertPixel(x)        swrConvertPixelBase(x)
+#define swrConvertPixelTexture(x) swrConvertPixelBase(BinaryUtils_bswap32(x))
+
 #else
-#define swrConvertPixel swrConvertPixelTexture
+
+#define swrConvertPixel        swrConvertPixelBase
+#define swrConvertPixelTexture swrConvertPixelBase
+
 #endif
