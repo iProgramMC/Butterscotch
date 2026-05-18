@@ -388,9 +388,9 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 // This used to be just one, "endFrame". Not sure what the different is.
 static void SWRenderer_endFrameInit(Renderer* renderer)
 {
-	SWRenderer* swr = (SWRenderer*) renderer;
-	assert(!swr->drawingToSurface);
-	Runner_setNextFrame(swr->fb, swr->width, swr->height);
+	(void) renderer;
+	
+	//this is kinda useless to do twice isn't it?
 }
 
 static void SWRenderer_endFrameEnd(Renderer* renderer)
