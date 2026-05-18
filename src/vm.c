@@ -3244,7 +3244,7 @@ static void rewriteBytecode14To16(VMContext* ctx) {
         uint32_t ip = entry->bytecodeAbsoluteOffset;
         uint32_t end = ip + entry->length;
 
-        while (ip < end) {
+        while (end > ip) {
             uint32_t instrAddr = ip;
             uint32_t instr = BinaryUtils_readUint32(&buf[instrAddr - base]);
             uint8_t oldKind = (instr >> 24) & 0xFF;
