@@ -3391,6 +3391,292 @@ static RValue builtin_ds_list_shuffle(VMContext* ctx, RValue* args, MAYBE_UNUSED
     return RValue_makeUndefined();
 }
 
+static RValue builtin_ds_list_clear(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    DsList* list = dsListGet(runner, id);
+    if (list == nullptr) return RValue_makeUndefined();
+    // Clear the contents but keep the slot alive.
+    repeat(arrlen(list->items), i) {
+        RValue_free(&list->items[i]);
+    }
+    arrfree(list->items);
+    list->items = nullptr;
+    return RValue_makeUndefined();
+}
+
+// Byte-cursor over a decoded ds_list blob.
+// "error" latches so a single truncated read short-circuits the rest.
+typedef struct {
+    const uint8_t* data;
+    int32_t size;
+    int32_t pos;
+    bool error;
+} DsReadStream;
+
+static uint32_t dsStreamReadU32(DsReadStream* s) {
+    if (s->error || s->pos + 4 > s->size) { s->error = true; return 0; }
+    uint32_t v = BinaryUtils_readUint32(s->data + s->pos);
+    s->pos += 4;
+    return v;
+}
+
+static int32_t dsStreamReadS32(DsReadStream* s) {
+    return (int32_t) dsStreamReadU32(s);
+}
+
+static double dsStreamReadF64(DsReadStream* s) {
+    if (s->error || s->pos + 8 > s->size) { s->error = true; return 0.0; }
+    double v = BinaryUtils_readFloat64(s->data + s->pos);
+    s->pos += 8;
+    return v;
+}
+
+static int64_t dsStreamReadI64(DsReadStream* s) {
+    if (s->error || s->pos + 8 > s->size) { s->error = true; return 0; }
+    int64_t v = BinaryUtils_readInt64(s->data + s->pos);
+    s->pos += 8;
+    return v;
+}
+
+static int dsHexNibble(char c) {
+    if (c >= '0' && '9' >= c) return c - '0';
+    if (c >= 'A' && 'F' >= c) return c - 'A' + 10;
+    if (c >= 'a' && 'f' >= c) return c - 'a' + 10;
+    return -1;
+}
+
+// Wire "magic values" used for ds_list_read and ds_list_write
+// See GameMaker-HTML5's variable_ReadValue/variable_WriteValue for reference
+#define DS_STREAM_VALUE_REAL 0
+#define DS_STREAM_VALUE_STRING 1
+#define DS_STREAM_VALUE_ARRAY 2
+#define DS_STREAM_VALUE_UNDEFINED 5
+#define DS_STREAM_VALUE_INT32 7
+#define DS_STREAM_VALUE_INT64 10
+#define DS_STREAM_VALUE_BOOL 13
+
+// Mirror of dsStreamWriteValue."version" selects how ARRAY is laid out:
+// * 0 = current format (magic 303): flat "len + values".
+// * 3 = older native format (magic 302): outer "len_1d", then per-row "len + values" (jagged 2D).
+static RValue dsStreamReadValue(DsReadStream* s, int32_t version) {
+    uint32_t tag = dsStreamReadU32(s);
+    if (s->error) return RValue_makeUndefined();
+    switch (tag) {
+        case DS_STREAM_VALUE_REAL:
+            return RValue_makeReal((GMLReal) dsStreamReadF64(s));
+        case DS_STREAM_VALUE_INT32:
+            return RValue_makeInt32(dsStreamReadS32(s));
+        case DS_STREAM_VALUE_INT64:
+        case 3: // VALUE_PTR: native serializes as int64; same wire shape.
+            return RValue_makeInt64(dsStreamReadI64(s));
+        case DS_STREAM_VALUE_BOOL:
+            return RValue_makeBool(dsStreamReadF64(s) != 0.0);
+        case DS_STREAM_VALUE_STRING: {
+            int32_t len = dsStreamReadS32(s);
+            if (s->error || 0 > len || s->pos + len > s->size) { s->error = true; return RValue_makeUndefined(); }
+            char* str = safeMalloc((size_t) len + 1);
+            if (len > 0) memcpy(str, s->data + s->pos, (size_t) len);
+            str[len] = '\0';
+            s->pos += len;
+            return RValue_makeOwnedString(str);
+        }
+        case DS_STREAM_VALUE_ARRAY: {
+            GMLArray* arr = GMLArray_create(0);
+            if (version == 3) {
+                int32_t len1d = dsStreamReadS32(s);
+                if (s->error || 0 > len1d) { s->error = true; GMLArray_decRef(arr); return RValue_makeUndefined(); }
+                if (len1d == 1) {
+                    int32_t len = dsStreamReadS32(s);
+                    if (s->error || 0 > len) { s->error = true; GMLArray_decRef(arr); return RValue_makeUndefined(); }
+                    if (len > 0) GMLArray_growTo(arr, len);
+                    for (int32_t i = 0; len > i && !s->error; i++) {
+                        RValue v = dsStreamReadValue(s, version);
+                        RValue* slot = GMLArray_slot(arr, i);
+                        if (slot != nullptr) { RValue_free(slot); *slot = v; } else { RValue_free(&v); }
+                    }
+                } else {
+                    for (int32_t o = 0; len1d > o && !s->error; o++) {
+                        int32_t len = dsStreamReadS32(s);
+                        if (s->error || 0 > len) { s->error = true; break; }
+                        if (len > 0) GMLArray_growTo(arr, o * GML_ARRAY_STRIDE + len);
+                        for (int32_t i = 0; len > i && !s->error; i++) {
+                            RValue v = dsStreamReadValue(s, version);
+                            RValue* slot = GMLArray_slot(arr, o * GML_ARRAY_STRIDE + i);
+                            if (slot != nullptr) { RValue_free(slot); *slot = v; } else { RValue_free(&v); }
+                        }
+                    }
+                }
+            } else {
+                int32_t len = dsStreamReadS32(s);
+                if (s->error || 0 > len) { s->error = true; GMLArray_decRef(arr); return RValue_makeUndefined(); }
+                if (len > 0) GMLArray_growTo(arr, len);
+                for (int32_t i = 0; len > i && !s->error; i++) {
+                    RValue v = dsStreamReadValue(s, version);
+                    RValue* slot = GMLArray_slot(arr, i);
+                    if (slot != nullptr) { RValue_free(slot); *slot = v; } else { RValue_free(&v); }
+                }
+            }
+            return RValue_makeArray(arr);
+        }
+        case DS_STREAM_VALUE_UNDEFINED:
+        default:
+            return RValue_makeUndefined();
+    }
+}
+
+static RValue builtin_ds_list_read(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    if (args[1].type != RVALUE_STRING || args[1].string == nullptr || args[1].string[0] == '\0') {
+        return RValue_makeBool(false);
+    }
+    DsList* list = dsListGet(runner, id);
+    if (list == nullptr) return RValue_makeBool(false);
+
+    const char* hex = args[1].string;
+    int32_t hexLen = (int32_t) strlen(hex);
+    if (2 > hexLen || (hexLen & 1) != 0) return RValue_makeBool(false);
+
+    int32_t byteLen = hexLen / 2;
+    uint8_t* bytes = safeMalloc((size_t) byteLen);
+    repeat(byteLen, i) {
+        int hi = dsHexNibble(hex[i * 2]);
+        int lo = dsHexNibble(hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0) { free(bytes); return RValue_makeBool(false); }
+        bytes[i] = (uint8_t) ((hi << 4) | lo);
+    }
+
+    DsReadStream s = { .data = bytes, .size = byteLen, .pos = 0, .error = false };
+    uint32_t magic = dsStreamReadU32(&s);
+    int32_t version;
+    // 301 = ~BC13 (REAL/STRING/ARRAY only)
+    // 302 = ~BC16 (adds INT32/INT64/BOOL/PTR)
+    if (magic == 301 || magic == 302) {
+        version = 3;
+    } else if (magic == 303) {
+        version = 0;
+    } else {
+        free(bytes);
+        return RValue_makeBool(false);
+    }
+
+    int32_t len = dsStreamReadS32(&s);
+    if (s.error || 0 > len) { free(bytes); return RValue_makeBool(false); }
+
+    // Replace, don't append: matches native ds_list_read which clears the list first.
+    repeat(arrlen(list->items), i) {
+        RValue_free(&list->items[i]);
+    }
+    arrfree(list->items);
+    list->items = nullptr;
+
+    repeat(len, i) {
+        RValue v = dsStreamReadValue(&s, version);
+        if (s.error) { RValue_free(&v); free(bytes); return RValue_makeBool(false); }
+        arrput(list->items, v);
+    }
+
+    free(bytes);
+    return RValue_makeBool(true);
+}
+
+static void dsStreamAppendU32(uint8_t** buf, uint32_t val) {
+    uint8_t tmp[4];
+    BinaryUtils_writeUint32(tmp, val);
+    repeat(4, i) arrput(*buf, tmp[i]);
+}
+
+static void dsStreamAppendF64(uint8_t** buf, double val) {
+    uint8_t tmp[8];
+    BinaryUtils_writeFloat64(tmp, val);
+    repeat(8, i) arrput(*buf, tmp[i]);
+}
+
+#ifndef NO_RVALUE_INT64
+static void dsStreamAppendI64(uint8_t** buf, int64_t val) {
+    uint8_t tmp[8];
+    BinaryUtils_writeInt64(tmp, val);
+    repeat(8, i) arrput(*buf, tmp[i]);
+}
+#endif
+
+static void dsStreamWriteValue(uint8_t** buf, RValue val) {
+    switch (val.type) {
+        case RVALUE_REAL:
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_REAL);
+            dsStreamAppendF64(buf, (double) val.real);
+            return;
+        case RVALUE_INT32:
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_INT32);
+            dsStreamAppendU32(buf, (uint32_t) val.int32);
+            return;
+#ifndef NO_RVALUE_INT64
+        case RVALUE_INT64:
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_INT64);
+            dsStreamAppendI64(buf, val.int64);
+            return;
+#endif
+        case RVALUE_BOOL:
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_BOOL);
+            dsStreamAppendF64(buf, val.int32 != 0 ? 1.0 : 0.0);
+            return;
+        case RVALUE_STRING: {
+            const char* str = val.string != nullptr ? val.string : "";
+            int32_t len = (int32_t) strlen(str);
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_STRING);
+            dsStreamAppendU32(buf, (uint32_t) len);
+            repeat(len, i) arrput(*buf, (uint8_t) str[i]);
+            return;
+        }
+        case RVALUE_ARRAY: {
+            int32_t len = GMLArray_length1D(val.array);
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_ARRAY);
+            dsStreamAppendU32(buf, (uint32_t) len);
+            repeat(len, i) {
+                RValue* slot = GMLArray_slot(val.array, i);
+                dsStreamWriteValue(buf, slot != nullptr ? *slot : RValue_makeUndefined());
+            }
+            return;
+        }
+        case RVALUE_ASSETREF:
+            // Asset refs are int32 indices; persist them as INT32 so a round-trip read recovers the index.
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_INT32);
+            dsStreamAppendU32(buf, (uint32_t) val.int32);
+            return;
+        default:
+            // Undefined / Struct / Method: native runner writes only the type tag with no payload.
+            dsStreamAppendU32(buf, DS_STREAM_VALUE_UNDEFINED);
+            return;
+    }
+}
+
+static RValue builtin_ds_list_write(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    DsList* list = dsListGet(runner, id);
+    if (list == nullptr) return RValue_makeOwnedString(safeStrdup(""));
+
+    uint8_t* buf = nullptr;
+    int32_t len = (int32_t) arrlen(list->items);
+    dsStreamAppendU32(&buf, 303); // version tag (see GameMaker-HTML5 ds_list.js)
+    dsStreamAppendU32(&buf, (uint32_t) len);
+    repeat(len, i) {
+        dsStreamWriteValue(&buf, list->items[i]);
+    }
+
+    int32_t byteLen = (int32_t) arrlen(buf);
+    char* hex = safeMalloc((size_t) byteLen * 2 + 1);
+    static const char HEX_CHARS[] = "0123456789ABCDEF";
+    repeat(byteLen, i) {
+        hex[i * 2] = HEX_CHARS[(buf[i] >> 4) & 0xF];
+        hex[i * 2 + 1] = HEX_CHARS[buf[i] & 0xF];
+    }
+    hex[byteLen * 2] = '\0';
+    arrfree(buf);
+    return RValue_makeOwnedString(hex);
+}
+
 // ===[ ARRAY FUNCTIONS ]===
 
 static RValue builtin_array_length_1d(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
@@ -10535,6 +10821,9 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "ds_list_find_index", builtin_ds_list_find_index);
     VM_registerBuiltin(ctx, "ds_list_find_value", builtin_ds_list_find_value);
     VM_registerBuiltin(ctx, "ds_list_shuffle", builtin_ds_list_shuffle);
+    VM_registerBuiltin(ctx, "ds_list_clear", builtin_ds_list_clear);
+    VM_registerBuiltin(ctx, "ds_list_write", builtin_ds_list_write);
+    VM_registerBuiltin(ctx, "ds_list_read", builtin_ds_list_read);
 
     // Array
 
