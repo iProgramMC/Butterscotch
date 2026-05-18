@@ -2,15 +2,6 @@
 
 #include "defines.h"
 
-// CONFIG: Change the size of a pixel.
-//
-// 32-bit: 0xAARRGGBB
-// 16-bit: 0b0RRRRRGGGGGBBBBB
-// 8-bit:  0bBBGGGRRR
-#define PIXEL_SIZE 32
-//#define PIXEL_SIZE 16
-//#define PIXEL_SIZE 8
-
 #if PIXEL_SIZE == 32
 typedef uint32_t uintpixel_t;
 #elif PIXEL_SIZE == 16
@@ -22,6 +13,8 @@ typedef uint8_t uintpixel_t;
 #error "Unknown pixel size!"
 #endif
 
+// The native format coming out of GameMaker Studio's assets.
+// Bytes are in the correct order even in big endian mode.
 typedef union
 {
 	struct {
@@ -31,6 +24,7 @@ typedef union
 }
 Pixel32ABGR;
 
+// This is the format the renderer knows how to work with.
 typedef union
 {
 	struct {

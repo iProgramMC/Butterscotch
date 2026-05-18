@@ -615,10 +615,16 @@ void Runner_setNextFrame(uint32_t* framebuffer, int width, int height)
         height,
         32,
         width * 4,
-        0xff0000,
-        0x00ff00,
-        0x0000ff,
-        0
+#ifdef IS_BIG_ENDIAN
+        0x0000ff00, // Rmask
+        0x00ff0000, // Gmask
+        0xff000000, // Bmask
+#else
+        0x00ff0000, // Rmask
+        0x0000ff00, // Gmask
+        0x000000ff, // Bmask
+#endif
+        0x00000000
     );
 }
 
