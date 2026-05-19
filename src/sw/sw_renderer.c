@@ -18,7 +18,7 @@
 
 #define TEXTURE_LRU_LENGTH 16
 
-#define SURFACE_MAX_COUNT 16
+#define SURFACE_MAX_COUNT 64
 
 typedef struct
 {
@@ -49,9 +49,10 @@ typedef struct
 	uint32_t textureIndexLRUHead;
 	uint32_t textureIndexLRUTail;
 	size_t textureCount;
-	
-	SWTexture** surfaces;
 	size_t surfaceCount;
+	size_t totalTextureCount;
+	size_t originalTPagCount;
+	size_t originalSpriteCount;
 	
 	bool viewActive;
 	int viewX, viewY, viewW, viewH;
@@ -215,7 +216,7 @@ FORCE_INLINE int swrCeiling(float x)
 	return i + (x > (float) i);
 }
 
-static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
+static SWTexture* swrCreateTexture(const uint8_t* srcBuffer, int width, int height)
 {
 	SWTexture* txt = safeCalloc(1, sizeof(SWTexture));
 	txt->buffer = safeCalloc(width * height, sizeof(uintpixel_t));
@@ -223,13 +224,23 @@ static SWTexture* createTexture(const uint8_t* srcBuffer, int width, int height)
 	const uint32_t* rgbaSrc = (const uint32_t*) srcBuffer;
 
 	size_t sz = width * height;
-	for (size_t i = 0; i < sz; i++)
-		txt->buffer[i] = swrConvertPixelTexture(rgbaSrc[i]);
+	
+	if (srcBuffer)
+	{
+		for (size_t i = 0; i < sz; i++)
+			txt->buffer[i] = swrConvertPixelTexture(rgbaSrc[i]);
+	}
 	
 	txt->width = (uint16_t) width;
 	txt->height = (uint16_t) height;
 	
 	return txt;
+}
+
+static void swrFreeTexture(SWTexture* texture)
+{
+	free(texture->buffer);
+	free(texture);
 }
 
 static bool swrAddTextureIndexToLRU(SWRenderer* swr, int textureIndex)
@@ -263,8 +274,7 @@ static void swrEvictTextureFromCache(SWRenderer* swr, int textureIndex)
 	SWTexture* texture = swr->textures[textureIndex];
 	swr->textures[textureIndex] = NULL;
 	
-	free(texture->buffer);
-	free(texture);
+	swrFreeTexture(texture);
 }
 
 // Lazily decodes and uploads a TXTR page on first access.
@@ -306,7 +316,7 @@ static bool swrEnsureTextureIsLoaded(SWRenderer* swr, uint32_t pageId)
 		return false;
 	}
 
-	swr->textures[pageId] = createTexture(pixels, w, h);
+	swr->textures[pageId] = swrCreateTexture(pixels, w, h);
 	free(pixels);
 	
 	fprintf(stderr, "SWR: Loaded TXTR page %u (%dx%d)\n", pageId, w, h);
@@ -341,18 +351,30 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	swr->fb = safeCalloc(swr->width * swr->height, sizeof(uintpixel_t));
 	swr->fbPitch = swr->width;
 	
-	//allocate surface buffer
-	swr->surfaces = safeCalloc(SURFACE_MAX_COUNT, sizeof(SWTexture*));
-	swr->surfaceCount = SURFACE_MAX_COUNT;
-	
 	//allocate texture buffer
 	swr->textureCount = dataWin->txtr.count;
-	swr->textures = safeCalloc(swr->textureCount, sizeof(SWTexture*));
+	swr->surfaceCount = SURFACE_MAX_COUNT;
+	swr->totalTextureCount = swr->textureCount + swr->surfaceCount;
+	swr->textures = safeCalloc(swr->totalTextureCount, sizeof(SWTexture*));
 	
 	//allocate texture LRU cache to allow for dynamic unloading of textures
 	swr->textureIndexLRU = safeCalloc(TEXTURE_LRU_LENGTH, sizeof(uint32_t));
 	swr->textureIndexLRUHead = 0;
 	swr->textureIndexLRUTail = 0;
+	
+	//HACK: this isn't good, really.  This should seriously be refactored.
+	//expand datawin's tpag items list to include our surface count.
+	swr->originalTPagCount = dataWin->tpag.count;
+	dataWin->tpag.items = safeRealloc(dataWin->tpag.items, sizeof(TexturePageItem) * (dataWin->tpag.count + swr->surfaceCount));
+	dataWin->tpag.count += swr->surfaceCount;
+	
+	swr->originalSpriteCount = dataWin->sprt.count;
+	
+	for (size_t i = swr->originalTPagCount; i < dataWin->tpag.count; i++)
+	{
+		memset(&dataWin->tpag.items[i], 0, sizeof(TexturePageItem));
+		dataWin->tpag.items[i].texturePageId = -1;
+	}
 	
 	fprintf(stderr, "SWRenderer initialized.\n");
 }
@@ -454,6 +476,34 @@ static void SWRenderer_endGUI(Renderer* renderer)
 {
 	(void)renderer;
 	UNIMP2();
+}
+
+// TODO[MrPowerGamerBR]: This is supposed to be refactored, not to modify data.win structs directly.
+static int32_t swrFindSurfaceTextureSlot(SWRenderer* swr)
+{
+	// NOTE: dynamic textures are not enrolled into the eviction cache for
+	// hopefully obvious reasons ...
+	for (size_t i = swr->textureCount; i != swr->totalTextureCount; i++)
+	{
+		if (swr->textures[i] == NULL) {
+			return (int32_t) i;
+		}
+	}
+	
+	return -1;
+}
+
+static int32_t swrFindSurfaceTPagSlot(SWRenderer* swr)
+{
+	DataWin* dw = swr->base.dataWin;
+	for (size_t i = swr->originalTPagCount; i != dw->tpag.count; i++)
+	{
+		if (dw->tpag.items[i].texturePageId == -1) {
+			return (int32_t) i;
+		}
+	}
+	
+	return -1;
 }
 
 static void swrTransformPosIfNeeded(SWRenderer* swr, float* dx, float* dy)
@@ -935,12 +985,21 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	SWRenderer* swr = (SWRenderer*) renderer;
 	DataWin* dwin = renderer->dataWin;
 
-	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) return;
+	if (tpagIndex < 0 || (uint32_t) tpagIndex >= dwin->tpag.count) {
+		fprintf(stderr, "%s: tpagIndex of %d is invalid\n", __func__, tpagIndex);
+		return;
+	}
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
 	int16_t pageId = tpag->texturePageId;
-	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
-	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
+	if (0 > pageId || swr->totalTextureCount <= (uint32_t) pageId) {
+		fprintf(stderr, "%s: tpagIndex of %d is invalid, as pageId of %d is invalid\n", __func__, tpagIndex, pageId);
+		return;
+	}
+	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) {
+		fprintf(stderr, "%s: could not ensure texture is loaded, tpagIndex: %d, pageId: %d\n", __func__, tpagIndex, pageId);
+		return;
+	}
 	
 	int sx = tpag->sourceX;
 	int sy = tpag->sourceY;
@@ -986,7 +1045,7 @@ static void SWRenderer_drawSpritePart(Renderer* renderer, int32_t tpagIndex,
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
 	int16_t pageId = tpag->texturePageId;
-	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (0 > pageId || swr->totalTextureCount <= (uint32_t) pageId) return;
 	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 	
 	int sx = tpag->sourceX + srcOffX;
@@ -1116,7 +1175,7 @@ static bool swrResolveFontState(SWRenderer* swr, DataWin* dw, Font* font, SwrFon
 		
 		state->fontTpag = &dw->tpag.items[state->fontTpagIndex];
 		int16_t pageId = state->fontTpag->texturePageId;
-		if (0 > pageId || (uint32_t) pageId >= swr->textureCount) return false;
+		if (0 > pageId || (uint32_t) pageId >= swr->totalTextureCount) return false;
 		if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return false;
 		
 		state->fontPageId = pageId;
@@ -1142,7 +1201,7 @@ static bool swrResolveGlyph(
 
 		TexturePageItem* glyphTpag = &dw->tpag.items[tpagIdx];
 		int16_t pid = glyphTpag->texturePageId;
-		if (0 > pid || (uint32_t) pid >= swr->textureCount) return false;
+		if (0 > pid || (uint32_t) pid >= swr->totalTextureCount) return false;
 		if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pid)) return false;
 
 		*tpagIndex = tpagIdx;
@@ -1329,7 +1388,7 @@ static void SWRenderer_drawTiled(Renderer* renderer, int32_t tpagIndex,
 
 	TexturePageItem* tpag = &dwin->tpag.items[tpagIndex];
 	int16_t pageId = tpag->texturePageId;
-	if (0 > pageId || swr->textureCount <= (uint32_t) pageId) return;
+	if (0 > pageId || swr->totalTextureCount <= (uint32_t) pageId) return;
 	if (!swrEnsureTextureIsLoaded(swr, (uint32_t) pageId)) return;
 
 	float axScale = fabsf(xscale);
@@ -1541,16 +1600,129 @@ static int32_t SWRenderer_createSpriteFromSurface(Renderer* renderer, int32_t su
 												   bool removeback, bool smooth,
 												   int32_t xorig, int32_t yorig)
 {
-	(void)renderer; (void)surfaceID; (void)x; (void)y; (void)w; (void)h;
-	(void)removeback; (void)smooth; (void)xorig; (void)yorig;
-	UNIMP();
-	return 0;
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	(void) removeback;
+	(void) smooth;
+	
+	if (surfaceID != -1) {
+		fprintf(stderr, "%s: Surfaces other than application_surface aren't supported yet!\n", __func__);
+		return 0;
+	}
+
+	int32_t texturePageId = swrFindSurfaceTextureSlot(swr);
+	int32_t tpagIndex = swrFindSurfaceTPagSlot(swr);
+	if (texturePageId == -1 || tpagIndex == -1) {
+		fprintf(stderr, "%s: Surface overflow!!\n", __func__);
+		return 0;
+	}
+	
+	SWTexture* tex = swrCreateTexture(NULL, w, h);
+	
+	// grab the pixels.
+	for (int iy = 0; iy < h; iy++)
+	{
+		uintpixel_t* dstline = &tex->buffer[iy * tex->width];
+		if ((iy + y) < 0 || (iy + y) >= swr->height)
+		{
+			for (int ix = 0; ix < w; ix++)
+				dstline[ix] = 0;
+			
+			continue;
+		}
+		
+		uintpixel_t* srcline = &swr->fb[(iy + y) * swr->width + x];
+		
+		int ix = 0, sx = x;
+		// left edge
+		for (; sx < 0 && ix < w; sx++, ix++)
+			dstline[ix] = 0;
+		
+		// in-bounds
+		for (; sx < swr->width && ix < w; sx++, ix++)
+			dstline[ix] = srcline[ix] | TRANSPARENT_MASK;
+		
+		// right edge
+		for (; ix < w; ix++)
+			dstline[ix] = 0;
+	}
+	
+	int32_t spriteW = w;
+	int32_t spriteH = h;
+
+	swr->textures[texturePageId] = tex;
+
+	// TODO[MrPowerGamerBR]: This is supposed to be refactored, not to modify data.win structs directly.
+	DataWin* dw = swr->base.dataWin;
+	TexturePageItem* tpag = &dw->tpag.items[tpagIndex];
+	tpag->sourceX = 0;
+	tpag->sourceY = 0;
+	tpag->sourceWidth = (uint16_t) spriteW;
+	tpag->sourceHeight = (uint16_t) spriteH;
+	tpag->targetX = 0;
+	tpag->targetY = 0;
+	tpag->targetWidth = (uint16_t) spriteW;
+	tpag->targetHeight = (uint16_t) spriteH;
+	tpag->boundingWidth = (uint16_t) spriteW;
+	tpag->boundingHeight = (uint16_t) spriteH;
+	tpag->texturePageId = texturePageId;
+	
+	uint32_t spriteIndex = DataWin_allocSpriteSlot(dw, swr->originalSpriteCount);
+	Sprite* sprite = &dw->sprt.sprites[spriteIndex];
+	// name was set by DataWin_allocSpriteSlot ("__newsprite<N>"); don't overwrite it here
+	sprite->width = (uint32_t) w;
+	sprite->height = (uint32_t) h;
+	sprite->originX = xorig;
+	sprite->originY = yorig;
+	sprite->textureCount = 1;
+	sprite->tpagIndices = safeMalloc(sizeof(int32_t));
+	sprite->tpagIndices[0] = (int32_t) tpagIndex;
+	sprite->maskCount = 0;
+	sprite->masks = nullptr;
+
+	fprintf(stderr, "%s: Allocated surface sprite with ID %d\n", __func__, spriteIndex);
+	return spriteIndex;
 }
 
 static void SWRenderer_deleteSprite(Renderer* renderer, int32_t spriteIndex)
 {
-	UNIMP();
-	(void)renderer; (void)spriteIndex;
+	SWRenderer* swr = (SWRenderer*) renderer;
+	
+	DataWin* dw = renderer->dataWin;
+	if (0 > spriteIndex || dw->sprt.count <= (uint32_t) spriteIndex) return;
+
+	// Refuse to delete original data.win sprites
+	if (swr->originalSpriteCount > (uint32_t) spriteIndex) {
+		fprintf(stderr, "%s: Sprite index %d is invalid.\n", __func__, spriteIndex);
+		return;
+	}
+
+	Sprite* sprite = &dw->sprt.sprites[spriteIndex];
+	if (sprite->textureCount == 0) return; // already deleted
+
+	for (uint32_t i = 0; i < sprite->textureCount; i++)
+	{
+		int32_t tpagIdx = sprite->tpagIndices[i];
+		if (tpagIdx >= 0 && (uint32_t) tpagIdx >= swr->originalTPagCount) {
+			TexturePageItem* tpag = &dw->tpag.items[tpagIdx];
+			int16_t pageId = tpag->texturePageId;
+			if (pageId >= 0 && swr->totalTextureCount > (uint32_t) pageId) {
+				swrFreeTexture(swr->textures[pageId]);
+				swr->textures[pageId] = NULL;
+			}
+			// Mark TPAG slot as free for reuse
+			tpag->texturePageId = -1;
+		}
+	}
+	
+	free(sprite->tpagIndices);
+	sprite->tpagIndices = NULL;
+	
+	const char* keepName = sprite->name;
+	memset(sprite, 0, sizeof(Sprite));
+	sprite->name = keepName;
+
+	fprintf(stderr, "SWR: Deleted sprite %d\n", spriteIndex);
 }
 
 static void SWRenderer_drawTiledPart(Renderer* renderer, int32_t tpagIndex,
