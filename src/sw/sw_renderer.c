@@ -1059,6 +1059,12 @@ static void SWRenderer_drawSprite(Renderer* renderer, int32_t tpagIndex, float x
 	{
 		float pivotX = (x - dx) * swrSgn(xscale);
 		float pivotY = (y - dy) * swrSgn(yscale);
+		
+		if (tpag->targetWidth != tpag->sourceWidth)
+			pivotX *= (float)tpag->targetWidth / tpag->sourceWidth;
+		if (tpag->targetHeight != tpag->sourceHeight)
+			pivotY *= (float)tpag->targetHeight/ tpag->sourceHeight;
+		
 		swrDrawSpriteRotated(renderer, dx, dy, dw, dh, texture, sx, sy, sw, sh, color, alpha, angleDeg, pivotX, pivotY);
 	}
 	else
