@@ -30,10 +30,10 @@ SWTexture;
 typedef struct
 {
 	Renderer base;
-
-	// Window Properties
-	uint16_t width, height;
 	
+	// Window Properties
+	uint16_t width;
+	uint16_t height;
 	// Framebuffer
 	uintpixel_t* fb;
 	uint16_t fbPitch; // in sizeof(uintpixel_t) units, NOT in bytes!
