@@ -222,7 +222,7 @@ FORCE_INLINE int swrCeiling(float x)
 static SWTexture* swrCreateTexture(const uint8_t* srcBuffer, int width, int height)
 {
 	SWTexture* txt = safeCalloc(1, sizeof(SWTexture));
-	txt->buffer = safeCalloc(width * height, sizeof(uintpixel_t));
+	txt->buffer = safeMalloc(width * height * sizeof(uintpixel_t));
 	
 	const uint32_t* rgbaSrc = (const uint32_t*) srcBuffer;
 
