@@ -393,12 +393,12 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 	swr->gameW = gameW;
 	swr->gameH = gameH;
 	swr->drawingToSurface = false;
-	if (swr->width != width || swr->height != height)
+	if (swr->width != windowW || swr->height != windowH)
 	{
 		//allocate frame buffer
 		free(swr->fb);
-		swr->fb = safeCalloc(width * height, sizeof(uintpixel_t));
-		swr->fbPitch = width;
+		swr->fb = safeCalloc(windowW * windowH, sizeof(uintpixel_t));
+		swr->fbPitch = windowW;
 		swr->width = windowW;
 		swr->height = windowH;
 	}
