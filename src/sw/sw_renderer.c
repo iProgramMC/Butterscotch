@@ -30,6 +30,9 @@ SWTexture;
 typedef struct
 {
 	Renderer base;
+
+	// Window Properties
+	uint16_t width, height;
 	
 	// Framebuffer
 	uintpixel_t* fb;
@@ -54,7 +57,7 @@ typedef struct
 	bool viewActive;
 	int viewX, viewY, viewW, viewH;
 	int portX, portY, portW, portH;
-	int gameW, gameH, width, height;
+	int gameW, gameH;
 }
 SWRenderer;
 
