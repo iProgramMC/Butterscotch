@@ -31,9 +31,6 @@ typedef struct
 {
 	Renderer base;
 	
-	// Window Properties
-	uint16_t width;
-	uint16_t height;
 	// Framebuffer
 	uintpixel_t* fb;
 	uint16_t fbPitch; // in sizeof(uintpixel_t) units, NOT in bytes!
@@ -57,7 +54,7 @@ typedef struct
 	bool viewActive;
 	int viewX, viewY, viewW, viewH;
 	int portX, portY, portW, portH;
-	int gameW, gameH, windowW, windowH;
+	int gameW, gameH, width, height;
 }
 SWRenderer;
 
@@ -353,10 +350,6 @@ static void SWRenderer_init(Renderer* renderer, DataWin* dataWin)
 	
 	renderer->dataWin = dataWin;
 	
-	//allocate frame buffer
-	swr->fb = safeCalloc(swr->width * swr->height, sizeof(uintpixel_t));
-	swr->fbPitch = swr->width;
-	
 	//allocate texture buffer
 	swr->textureCount = dataWin->txtr.count;
 	swr->surfaceCount = SURFACE_MAX_COUNT;
@@ -394,13 +387,21 @@ static void SWRenderer_destroy(Renderer* renderer)
 	fprintf(stderr, "SWRenderer destroyed.\n");
 }
 
-static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
+static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t width, int32_t height)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->gameW = gameW;
 	swr->gameH = gameH;
-	swr->windowW = windowW;
-	swr->windowH = windowH;
+	if (swr->width != width || swr->height != height)
+	{
+		//allocate frame buffer
+		if (swr->fb)
+			free(swr->fb);
+		swr->fb = safeCalloc(width * height, sizeof(uintpixel_t));
+		swr->fbPitch = width;
+	}
+	swr->width = width;
+	swr->height = height;
 	swr->drawingToSurface = false;
 }
 
@@ -436,8 +437,8 @@ static void SWRenderer_beginView(Renderer* renderer, int32_t viewX, int32_t view
 		yratio = 1.0f;
 	}
 	else {
-		xratio = (float) swr->windowW / swr->gameW;
-		yratio = (float) swr->windowH / swr->gameH;
+		xratio = (float) swr->width / swr->gameW;
+		yratio = (float) swr->height / swr->gameH;
 	}
 
 	portX = (int)(portX * xratio);
@@ -2145,7 +2146,7 @@ void SWRenderer_clearFrameBuffer(Renderer* renderer, uint32_t color)
 	}
 }
 
-Renderer* SWRenderer_create(int windowWidth, int windowHeight)
+Renderer* SWRenderer_create(void)
 {
 	SWRenderer* swr = safeCalloc(1, sizeof(SWRenderer));
 	swr->base.vtable = &swrVtable;
@@ -2155,9 +2156,6 @@ Renderer* SWRenderer_create(int windowWidth, int windowHeight)
 	swr->base.drawHalign = 0;
 	swr->base.drawValign = 0;
 	swr->base.circlePrecision = 24;
-	
-	swr->width = windowWidth;
-	swr->height = windowHeight;
 
 	return (Renderer*) swr;
 }
