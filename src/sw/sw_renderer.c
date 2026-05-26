@@ -392,16 +392,16 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->gameW = gameW;
 	swr->gameH = gameH;
+	swr->drawingToSurface = false;
 	if (swr->width != width || swr->height != height)
 	{
 		//allocate frame buffer
 		free(swr->fb);
 		swr->fb = safeCalloc(width * height, sizeof(uintpixel_t));
 		swr->fbPitch = width;
+		swr->width = width;
+		swr->height = height;
 	}
-	swr->width = width;
-	swr->height = height;
-	swr->drawingToSurface = false;
 }
 
 // This used to be just one, "endFrame". Not sure what the different is.
