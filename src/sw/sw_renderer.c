@@ -397,7 +397,7 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 	{
 		//allocate frame buffer
 		free(swr->fb);
-		swr->fb = safeCalloc(windowW * windowH, sizeof(uintpixel_t));
+		swr->fb = safeMalloc(windowW * windowH * sizeof(uintpixel_t));
 		swr->fbPitch = windowW;
 		swr->width = windowW;
 		swr->height = windowH;
