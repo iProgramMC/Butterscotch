@@ -387,7 +387,7 @@ static void SWRenderer_destroy(Renderer* renderer)
 	fprintf(stderr, "SWRenderer destroyed.\n");
 }
 
-static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t width, int32_t height)
+static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gameH, int32_t windowW, int32_t windowH)
 {
 	SWRenderer* swr = (SWRenderer*) renderer;
 	swr->gameW = gameW;
@@ -399,8 +399,8 @@ static void SWRenderer_beginFrame(Renderer* renderer, int32_t gameW, int32_t gam
 		free(swr->fb);
 		swr->fb = safeCalloc(width * height, sizeof(uintpixel_t));
 		swr->fbPitch = width;
-		swr->width = width;
-		swr->height = height;
+		swr->width = windowW;
+		swr->height = windowH;
 	}
 }
 
