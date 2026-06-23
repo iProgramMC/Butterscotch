@@ -45,6 +45,8 @@ static bool bTraceFrames = false;
 static float fSpeedMultiplier = 1.0f;
 static float fFastForwardSpeed = 1000.0f;
 
+float fGameScale = 0.5f;
+
 // Globals
 static DataWin* pDataWin;
 static Gen8* pGen8;

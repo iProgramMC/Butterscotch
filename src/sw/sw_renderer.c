@@ -8,8 +8,8 @@
 #include "pixel_convert.h"
 #include "image/image_decoder.h"
 
-#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
-//#define UNIMP() do { } while (0)
+//#define UNIMP() do { fprintf(stderr, "NYI %s\n", __func__); } while (0)
+#define UNIMP() do { } while (0)
 #define UNIMP2() do { } while (0)
 
 #ifndef M_PI

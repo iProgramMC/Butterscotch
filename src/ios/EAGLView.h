@@ -13,6 +13,8 @@
 	int fbWidth;
 	int fbHeight;
 	uint32_t* renderFramebufferCopy;
+	int rfbCopyWidth;
+	int rfbCopyHeight;
 }
 
 + (id)alloc;

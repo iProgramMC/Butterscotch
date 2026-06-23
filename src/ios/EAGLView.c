@@ -8,12 +8,11 @@
 #include "gettime.h"
 #include "desktop/platformdefs.h"
 
-static uint64_t lastUpdate;
-static uint64_t timeBaseNumer, timeBaseDenom;
-
 extern void updateGame();
 
 extern enum GraphicsAPI gfx;
+
+extern float fGameScale;
 
 static Runner* g_runner;
 
@@ -32,10 +31,6 @@ int NearestPO2(int i) {
 	return -1;
 }
 
-int GetTickCount() {
-	return (int)(mach_absolute_time() * timeBaseNumer / timeBaseDenom);
-}
-
 @implementation EAGLView
 
 + (Class)layerClass
@@ -45,12 +40,6 @@ int GetTickCount() {
 
 - (id)initWithFrame:(CGRect)frame
 {
-	struct mach_timebase_info tb;
-	mach_timebase_info(&tb);
-	timeBaseNumer = tb.numer;
-	timeBaseDenom = tb.denom;
-	lastUpdate = mach_absolute_time();
-	
 	self = [super initWithFrame:frame];
 	return self;
 }
@@ -61,33 +50,28 @@ int GetTickCount() {
 	fbWidth = width;
 	fbHeight = height;
 	
-	if (renderFramebufferCopy)
-		free(renderFramebufferCopy);
-	
 	int glWidth = NearestPO2(fbWidth), glHeight = NearestPO2(fbHeight);
-	renderFramebufferCopy = malloc(sizeof(uint32_t) * glWidth * glHeight);
+	if (rfbCopyWidth != glWidth || rfbCopyHeight != glHeight)
+	{
+		if (renderFramebufferCopy)
+			free(renderFramebufferCopy);
+		
+		size_t rfbSize = sizeof(uint32_t) * glWidth * glHeight;
+		renderFramebufferCopy = malloc(rfbSize);
+		memset(renderFramebufferCopy, 0, rfbSize);
+		rfbCopyWidth = glWidth;
+		rfbCopyHeight = glHeight;
+	}
 }
 
 - (void)drawFrame
 {
 	[EAGLContext setCurrentContext:context];
 	
-	uint64_t curVal = mach_absolute_time();
-	uint64_t diff = curVal - lastUpdate;
-	lastUpdate = diff;
-	
-	uint64_t elapsed_ns = diff * timeBaseNumer / timeBaseDenom;
-	int diffMs = (int)(elapsed_ns / 1000000);
-	
-	fprintf(stderr, "Difference: %d ms (%lld ns).  Corresponds to %.1lf fps.\n", diffMs, diff, 1000.f / diffMs);
-
 	if (!renderFramebufferCopy) {
 		return;
 	}
 
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	glBindFramebufferOES(GL_FRAMEBUFFER_OES, framebuffer);
 
 	glClear(GL_COLOR_BUFFER_BIT);
@@ -98,13 +82,25 @@ int GetTickCount() {
 	float xs = 1, ys = 1;
 	
 	if (renderFramebufferCopy) {
-		int glWidth = NearestPO2(fbWidth), glHeight = NearestPO2(fbHeight);
-		xs = (float)(glWidth) / fbWidth;
-		ys = (float)(glHeight) / fbHeight;
+		int glWidth = rfbCopyWidth, glHeight = rfbCopyHeight;
+		
+		CGRect bounds = [[UIScreen mainScreen] bounds];
+		
+		// TODO: magic value, fix it!
+		xs = (float)(glWidth) / bounds.size.width;
+		ys = (float)(glHeight) / bounds.size.height;
 		
 		// copy line by line
 		for (int y = 0; y < fbHeight; y++) {
-			memcpy(renderFramebufferCopy + y * glWidth, renderFrameBuffer + y * fbWidth, fbWidth * sizeof(uint32_t));
+			//memcpy(renderFramebufferCopy + y * glWidth, renderFrameBuffer + y * fbWidth, fbWidth * sizeof(uint32_t));
+			
+			uint32_t* dstline = renderFramebufferCopy + y * glWidth;
+			const uint32_t* srcline = renderFrameBuffer + y * fbWidth;
+			for (int x = 0; x < fbWidth; x++) {
+				uint32_t swapped = srcline[x];
+				swapped = (swapped & 0xFF00FF00) | ((swapped & 0xFF) << 16) | ((swapped & 0xFF0000) >> 16);
+				dstline[x] = swapped;
+			}
 		}
 		
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, glWidth, glHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, renderFramebufferCopy);
@@ -136,32 +132,25 @@ int GetTickCount() {
 
 	glBindRenderbufferOES(GL_RENDERBUFFER_OES, colorRenderbuffer);
 	[context presentRenderbuffer:GL_RENDERBUFFER_OES];
-	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
 }
 
 - (void)performGameLoopOneIteration
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
+	static uint64_t finishedLast = 0;
+	uint64_t start = nowNanos();
 	updateGame();
-
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
+	uint64_t endUpdate = nowNanos();
 	[self drawFrame];
+	uint64_t end = nowNanos();
 	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
+	fprintf(stderr, "took %lld us (draw %lld us, update %lld us. between game loops %lld us)\n", (end-start)/1000, (end-endUpdate)/1000, (endUpdate-start)/1000, (start-finishedLast)/1000);
 	fflush(stderr);
+	
+	finishedLast = end;
 }
 
 - (void)startAnimationWithUpdatePeriod:(uint64_t)updatePeriod
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	CGFloat updatePeriodInSeconds = (CGFloat)((double)updatePeriod / 1000000000);
 	
 	[NSTimer scheduledTimerWithTimeInterval:updatePeriodInSeconds
@@ -169,9 +158,6 @@ int GetTickCount() {
 		selector:@selector(performGameLoopOneIteration)
 		userInfo:nil
 		repeats:YES];
-	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
 }
 
 - (void)stopAnimation
@@ -180,9 +166,6 @@ int GetTickCount() {
 
 + (id)alloc
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	id that = [super alloc];
 	pEAGLView = that;
 	return that;
@@ -198,11 +181,8 @@ int GetTickCount() {
 	pEAGLView = nil;
 }
 
-- (void)platformInit
+- (BOOL)platformInit
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	CAEAGLLayer *eaglLayer = (CAEAGLLayer *)self.layer;
 	eaglLayer.opaque = YES;
 	
@@ -218,8 +198,7 @@ int GetTickCount() {
 	if (!context || ![EAGLContext setCurrentContext:context]) {
 		fprintf(stderr, "Failed to create and set the OpenGL ES context.\n");
 		[self release];
-		exit(1);
-		return;
+		return NO;
 	}
 	
 	glGenFramebuffersOES(1, &framebuffer);
@@ -233,6 +212,8 @@ int GetTickCount() {
 	glBindTexture(GL_TEXTURE_2D, framebufferTextureID);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
 	[context renderbufferStorage:GL_RENDERBUFFER_OES fromDrawable:eaglLayer];
 	glFramebufferRenderbufferOES(GL_FRAMEBUFFER_OES, GL_COLOR_ATTACHMENT0_OES, GL_RENDERBUFFER_OES, colorRenderbuffer);
@@ -243,17 +224,13 @@ int GetTickCount() {
 	glViewport(0, 0, width, height);
 
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
+
+	return YES;
 }
 
 @end
 
 void Runner_setNextFrame(uint32_t* framebuffer, int width, int height) {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
     [pEAGLView setRenderFrameBuffer:framebuffer withWidth:width andHeight:height];
 }
 
@@ -267,38 +244,18 @@ bool platformInit(int32_t reqW, int32_t reqH, const char *title, bool headless)
 	fbWidth = reqW;
 	fbHeight = reqH;
 	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
-	[pEAGLView platformInit];
-	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
+	return [pEAGLView platformInit];
 }
 
 void platformInitFunctions(Runner* runner)
 {
     g_runner = runner;
 	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
-	if (pEAGLView == nil){
-		fprintf(stderr, "This shit is null?\n");
-		fflush(stderr);
-	}
-	
 	[pEAGLView startAnimationWithUpdatePeriod:1000000000/30]; // 30 fps
-	
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
 }
 
 void platformExit(void)
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	// nothing
 }
 
@@ -314,9 +271,6 @@ void *platformGetProcAddress(const char *name)
 
 bool platformHandleEvents(void)
 {
-	fprintf(stderr, "%s   %s:%d\n", __func__, __FILE__, __LINE__);
-	fflush(stderr);
-	
 	return false;
 }
 
@@ -330,8 +284,8 @@ void platformGetMousePos(double *xPos, double *yPos)
 bool platformGetWindowSize(int32_t* outW, int32_t* outH) {
     if (!outW || !outH) return false;
     if (fbWidth <= 0 || fbHeight <= 0) return false;
-    *outW = fbWidth;
-    *outH = fbHeight;
+    *outW = (int)((float)fbWidth * fGameScale);
+    *outH = (int)((float)fbHeight * fGameScale);
     return true;
 }
 
