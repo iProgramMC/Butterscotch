@@ -143,7 +143,8 @@ int NearestPO2(int i) {
 	[self drawFrame];
 	uint64_t end = nowNanos();
 	
-	fprintf(stderr, "took %lld us (draw %lld us, update %lld us. between game loops %lld us)\n", (end-start)/1000, (end-endUpdate)/1000, (endUpdate-start)/1000, (start-finishedLast)/1000);
+	fprintf(stderr, "took %lld us (draw %lld us, update %lld us. between game loops %lld us)\n",
+		(end-start)/1000, (end-endUpdate)/1000, (endUpdate-start)/1000, (start-finishedLast)/1000);
 	fflush(stderr);
 	
 	finishedLast = end;
