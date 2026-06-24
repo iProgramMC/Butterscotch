@@ -21,6 +21,8 @@ static EAGLView* pEAGLView;
 static GLint fbWidth  = 0;
 static GLint fbHeight = 0;
 
+static GLuint controlsTextureID = 0;
+
 int NearestPO2(int i) {
 	for (int j = 1; j < 1024 * 1024; j *= 2) {
 		if (i < j)
@@ -42,6 +44,57 @@ int NearestPO2(int i) {
 {
 	self = [super initWithFrame:frame];
 	return self;
+}
+
+- (void)loadControlsTexture
+{
+	UIImage *image = [UIImage imageNamed:@"controls"];
+
+	CGImageRef cgImage = image.CGImage;
+	size_t width = CGImageGetWidth(cgImage);
+	size_t height = CGImageGetHeight(cgImage);
+
+	GLubyte *data = (GLubyte *)calloc(width * height * 4, sizeof(GLubyte));
+
+	CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+	CGContextRef cgContext = CGBitmapContextCreate(
+		data,
+		width,
+		height,
+		8,
+		width * 4,
+		colorSpace,
+		kCGImageAlphaPremultipliedLast
+	);
+
+	CGContextTranslateCTM(cgContext, 0, height);
+	CGContextScaleCTM(cgContext, 1.0f, -1.0f);
+	CGContextDrawImage(cgContext, CGRectMake(0, 0, width, height), cgImage);
+
+	GLuint texture;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	glTexImage2D(
+		GL_TEXTURE_2D,
+		0,
+		GL_RGBA,
+		(GLsizei)width,
+		(GLsizei)height,
+		0,
+		GL_RGBA,
+		GL_UNSIGNED_BYTE,
+		data
+	);
+	
+	controlsTextureID = texture;
+
+	CGContextRelease(cgContext);
+	CGColorSpaceRelease(colorSpace);
+	free(data);
 }
 
 - (void)setRenderFrameBuffer:(const uint32_t*)fb withWidth:(int)width andHeight:(int)height
@@ -111,19 +164,41 @@ int NearestPO2(int i) {
 	glEnableClientState(GL_TEXTURE_COORD_ARRAY);
 	GLfloat vertices[] = { 
 		// tri 1
-		-1, -1,    0, 1.0f / ys,
-		-1, 1,     0, 0,
-		1, 1,      1.0f / xs, 0,
+		-1, 0,    0, 0.5f / ys,
+		-1, 1,    0, 0,
+		1, 1,     1.0f / xs, 0,
 		
 		// tri 2
-		-1, -1,    0, 1.0f / ys,
-		1, 1,      1.0f / xs, 0,
-		1, -1,     1.0f / xs, 1.0f / ys,
+		-1, 0,    0, 0.5f / ys,
+		1, 1,     1.0f / xs, 0,
+		1, 0,     1.0f / xs, 0.5f / ys,
 	};
 	
 	// count, type, stride, pointer
 	glVertexPointer(2, GL_FLOAT, 4 * sizeof(float), vertices);
 	glTexCoordPointer(2, GL_FLOAT, 4 * sizeof(float), vertices + 2);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	
+	glBindTexture(GL_TEXTURE_2D, controlsTextureID);
+	
+	float cxs = 320.0f / 512.0f;
+	float cys = 240.0f / 256.0f;
+	
+	GLfloat vertices2[] = {
+		// tri 1
+		-1, -1, 0, 0,    // lower left
+		1, -1, cxs, 0,   // lower right
+		1, 0, cxs, cys, // upper right
+		
+		// tri 2
+		-1, -1, 0, 0,    // lower left
+		1, 0, cxs, cys, // upper right
+		-1, 0, 0, cys,  // upper left
+	};
+	
+	// count, type, stride, pointer
+	glVertexPointer(2, GL_FLOAT, 4 * sizeof(float), vertices2);
+	glTexCoordPointer(2, GL_FLOAT, 4 * sizeof(float), vertices2 + 2);
 	glDrawArrays(GL_TRIANGLES, 0, 6);
 	
 	glDisable(GL_TEXTURE_2D);
@@ -159,6 +234,8 @@ int NearestPO2(int i) {
 		selector:@selector(performGameLoopOneIteration)
 		userInfo:nil
 		repeats:YES];
+	
+	[self loadControlsTexture];
 }
 
 - (void)stopAnimation
