@@ -1,3 +1,4 @@
+#import <objc/runtime.h>
 #import "EAGLView.h"
 #import "MainGameController.h"
 #include <assert.h>
@@ -23,6 +24,66 @@ static GLint fbHeight = 0;
 
 static GLuint controlsTextureID = 0;
 
+enum {
+	BUTTON_L,
+	BUTTON_U,
+	BUTTON_D,
+	BUTTON_R,
+	BUTTON_Z,
+	BUTTON_X,
+	BUTTON_C,
+	BUTTON_COUNT
+};
+
+static bool buttonStates[BUTTON_COUNT];
+
+static void getButtonIndicesFromPosition(int x, int y, int* indices, int* indexCount)
+{
+	CGRect rect = [[UIScreen mainScreen] bounds];
+	
+	x = (int)(x * 320.0f / rect.size.width);
+	y = (int)(y * 480.0f / rect.size.height);
+	
+	*indexCount = 0;
+	
+	if (y < 340) return; // not in the bottom rectangle. normally 360
+	
+	//normally I'd also exclude 120-200
+	
+	if (x < 160) {
+		if (x <= 40) indices[(*indexCount)++] = BUTTON_L;
+		if (x >= 80) indices[(*indexCount)++] = BUTTON_R;
+		if (y <= 400) indices[(*indexCount)++] = BUTTON_U;
+		if (y >= 440) indices[(*indexCount)++] = BUTTON_D;
+	}
+	else {
+		if (y < 420) indices[(*indexCount)++] = BUTTON_Z;
+		else if (x < 260) indices[(*indexCount)++] = BUTTON_X;
+		else indices[(*indexCount)++] = BUTTON_C;
+	}
+	
+	assert((*indexCount) < 2);
+}
+
+static int buttonIndexToGml(int keyId)
+{
+	switch (keyId) {
+		case BUTTON_L: return VK_LEFT;
+		case BUTTON_R: return VK_RIGHT;
+		case BUTTON_U: return VK_UP;
+		case BUTTON_D: return VK_DOWN;
+		case BUTTON_Z: return 'Z';
+		case BUTTON_X: return 'X';
+		case BUTTON_C: return 'C';
+	}
+	return -1;
+}
+
+#define MAX_TOUCHES 10
+
+static void* touchPtrs[MAX_TOUCHES];
+static int touchCount = 0;
+
 int NearestPO2(int i) {
 	for (int j = 1; j < 1024 * 1024; j *= 2) {
 		if (i < j)
@@ -43,6 +104,7 @@ int NearestPO2(int i) {
 - (id)initWithFrame:(CGRect)frame
 {
 	self = [super initWithFrame:frame];
+	
 	return self;
 }
 
@@ -259,6 +321,94 @@ int NearestPO2(int i) {
 	pEAGLView = nil;
 }
 
+- (void)updateTouchControls
+{
+	fprintf(stderr, "asdasd\n");
+	bool lastButtonStates[BUTTON_COUNT];
+	memcpy(lastButtonStates, buttonStates, sizeof buttonStates);
+	memset(buttonStates, 0, sizeof buttonStates);
+
+	for (int i = 0; i < touchCount; i++)
+	{
+		UITouch *touch = (UITouch*) touchPtrs[i];
+		CGPoint p = [touch locationInView:self];
+
+		fprintf(stderr, "\ttouch: %d, %d\n", (int) p.x, (int) p.y);
+
+		int buttons[2];
+		int count = 0;
+		getButtonIndicesFromPosition((int)p.x, (int)p.y, buttons, &count);
+		
+		for (int i = 0; i < count; i++) {
+			buttonStates[buttons[i]] = true;
+		}
+	}
+	
+	for (int i = 0; i < BUTTON_COUNT; i++)
+	{
+		if (lastButtonStates[i] && !buttonStates[i]) {
+			fprintf(stderr, "xdddd up %d\n", i);
+			RunnerKeyboard_onKeyUp(g_runner->keyboard, buttonIndexToGml(i));
+		}
+		if (!lastButtonStates[i] && buttonStates[i]) {
+			fprintf(stderr, "xdddd down %d\n", i);
+			RunnerKeyboard_onKeyDown(g_runner->keyboard, buttonIndexToGml(i));
+		}
+	}
+}
+
+- (void)touchesBegan:(NSSet *)touches withEvent:(UIEvent *)event
+{
+	for (UITouch *touch in touches)
+	{
+		if (touchCount >= MAX_TOUCHES) continue; // drop
+		
+		bool found = false;
+		for (int i = 0; i < touchCount; i++) {
+			if (touchPtrs[i] == touch) {
+				found = true;
+				break;
+			}
+		}
+		
+		if (!found)
+			touchPtrs[touchCount++] = touch;
+	}
+	
+	[self updateTouchControls];
+}
+
+- (void)touchesMoved:(NSSet *)touches withEvent:(UIEvent *)event
+{
+	[self updateTouchControls];
+}
+
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event
+{
+	for (UITouch *touch in touches)
+	{
+		int place = -1;
+		for (int i = 0; i < touchCount; i++) {
+			if (touchPtrs[i] == touch) {
+				place = i;
+				break;
+			}
+		}
+		
+		if (place >= 0) {
+			touchPtrs[place] = touchPtrs[--touchCount];
+			touchPtrs[touchCount] = NULL;
+		}
+	}
+	
+	[self updateTouchControls];
+}
+
+- (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event
+{
+	[self touchesEnded:touches withEvent:event];
+}
+
 - (BOOL)platformInit
 {
 	CAEAGLLayer *eaglLayer = (CAEAGLLayer *)self.layer;
@@ -302,6 +452,9 @@ int NearestPO2(int i) {
 	glViewport(0, 0, width, height);
 
 	glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+	[self setMultipleTouchEnabled:YES];
+	[self becomeFirstResponder];
 
 	return YES;
 }
