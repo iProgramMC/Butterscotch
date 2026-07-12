@@ -35,6 +35,7 @@ enum {
 	BUTTON_COUNT
 };
 
+static bool lastButtonStates[BUTTON_COUNT];
 static bool buttonStates[BUTTON_COUNT];
 
 static void getButtonIndicesFromPosition(int x, int y, int* indices, int* indexCount)
@@ -323,9 +324,6 @@ int NearestPO2(int i) {
 
 - (void)updateTouchControls
 {
-	fprintf(stderr, "asdasd\n");
-	bool lastButtonStates[BUTTON_COUNT];
-	memcpy(lastButtonStates, buttonStates, sizeof buttonStates);
 	memset(buttonStates, 0, sizeof buttonStates);
 
 	for (int i = 0; i < touchCount; i++)
@@ -344,6 +342,7 @@ int NearestPO2(int i) {
 		}
 	}
 	
+	memcpy(lastButtonStates, buttonStates, sizeof buttonStates);
 	for (int i = 0; i < BUTTON_COUNT; i++)
 	{
 		if (lastButtonStates[i] && !buttonStates[i]) {
